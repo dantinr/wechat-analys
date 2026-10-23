@@ -117,7 +117,7 @@ public sealed class MainForm : Form
     {
         var item = captures.SelectedRecord;
         detail.Text = item == null ? "添加会话并开始记录后，这里显示原始消息。\r\n选择一条消息即可查看来源并整理需求。" : item.Message is { } message ?
-            $"{item.TargetName}\r\n发送人：{message.Sender}\r\n群昵称：{message.GroupNickname ?? "—（未设置或本机未同步）"}\r\n发送于 {message.SentAt:yyyy-MM-dd HH:mm:ss zzz}\r\n记录于 {item.ObservedAt:yyyy-MM-dd HH:mm:ss zzz}\r\n消息类型：{RawChatSource.TypeName(message.RawType)}\r\n消息编号：{message.ServerId} / 本地 {message.LocalId}\r\n来源：{message.SourceDatabase}\r\n\r\n【消息原文】\r\n{item.Text}\r\n\r\n{item.Note}".ReplaceLineEndings(Environment.NewLine) :
+            $"{item.TargetName}\r\n发送人：{message.DisplaySender}\r\n群昵称：{message.GroupNickname ?? "—（未设置或本机未同步）"}\r\n发送于 {message.SentAt:yyyy-MM-dd HH:mm:ss zzz}\r\n记录于 {item.ObservedAt:yyyy-MM-dd HH:mm:ss zzz}\r\n消息类型：{RawChatSource.TypeName(message.RawType)}\r\n消息编号：{message.ServerId} / 本地 {message.LocalId}\r\n来源：{message.SourceDatabase}\r\n\r\n【消息原文】\r\n{item.Text}\r\n\r\n{item.Note}".ReplaceLineEndings(Environment.NewLine) :
             $"{item.TargetName}\r\n旧版 OCR 记录，采集于 {item.ObservedAt:yyyy-MM-dd HH:mm:ss zzz}\r\n\r\n{item.Note}\r\n\r\n{item.Text}".ReplaceLineEndings(Environment.NewLine);
         picture.Image?.Dispose(); picture.Image = null;
         if (item != null && !string.IsNullOrEmpty(item.ImagePath) && File.Exists(store.ImageFile(item.ImagePath)))

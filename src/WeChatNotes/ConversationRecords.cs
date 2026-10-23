@@ -28,7 +28,7 @@ internal sealed class ConversationRecords : UserControl
         var page = new TabPage(name) { Tag = id.Length == 0 ? null : id, ToolTipText = name };
         var grid = MainForm.Grid();
         grid.Columns.Add("time", "发送时间"); grid.Columns.Add("name", "会话");
-        grid.Columns.Add("nickname", "群昵称"); grid.Columns.Add("text", "消息原文");
+        grid.Columns.Add("sender", "发送人"); grid.Columns.Add("text", "消息原文");
         grid.Columns[0].FillWeight = 27; grid.Columns[1].FillWeight = 22;
         grid.Columns[2].FillWeight = 25; grid.Columns[3].FillWeight = 65;
         grid.SelectionChanged += (_, _) => { if (!updating && tabs.SelectedTab == page) SelectionChanged?.Invoke(); };
@@ -79,7 +79,7 @@ internal sealed class ConversationRecords : UserControl
                 (c.Text + "\n" + c.TargetName + "\n" + c.Message?.Sender + "\n" + c.Message?.GroupNickname).Contains(search, StringComparison.OrdinalIgnoreCase)))
             {
                 int index = grid.Rows.Add((item.Message?.SentAt ?? item.ObservedAt).ToString("MM-dd HH:mm:ss"), item.TargetName,
-                    string.IsNullOrWhiteSpace(item.Message?.GroupNickname) ? "—" : item.Message.GroupNickname, item.AddedText.ReplaceLineEndings(" "));
+                    item.Message?.DisplaySender ?? "旧版 OCR（无发送人信息）", item.AddedText.ReplaceLineEndings(" "));
                 grid.Rows[index].Tag = item;
             }
             var row = grid.Rows.Cast<DataGridViewRow>().FirstOrDefault(r => (r.Tag as CaptureRecord)?.Id == selected)

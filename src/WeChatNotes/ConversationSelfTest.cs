@@ -50,7 +50,7 @@ internal static class ConversationSelfTest
             view.RefreshRecords();
             check("已绑定会话包括空会话均有独立标签", view.ConversationIds.ToHashSet().SetEquals(["a", "b", "empty"]));
             view.SelectConversation("a");
-            check("群标签仅展示本群消息并显示群昵称列", view.VisibleCount == 1 && view.SelectedRecord?.Id == "a1" && (string?)view.CurrentGrid!.Rows[0].Cells["nickname"].Value == "产品·小林🙂");
+            check("群标签仅展示本群消息并显示发送人列", view.VisibleCount == 1 && view.SelectedRecord?.Id == "a1" && view.CurrentGrid!.Columns["sender"]!.HeaderText == "发送人" && (string?)view.CurrentGrid.Rows[0].Cells["sender"].Value == old.Sender);
             view.SelectConversation("b"); view.CurrentGrid!.CurrentCell = view.CurrentGrid.Rows[3].Cells[0];
             string? selected = view.SelectedRecord?.Id;
             view.SelectConversation("a"); view.SelectConversation("b");
@@ -60,6 +60,16 @@ internal static class ConversationSelfTest
             view.Search("产品·小林"); check("昵称搜索不混入其他会话", view.VisibleCount == 0 && view.SelectedRecord == null);
             view.SelectConversation("a"); check("群昵称可用于搜索", view.VisibleCount == 1 && view.SelectedRecord?.Id == "a1");
             view.Search(""); view.SelectConversation("empty"); check("空会话清空预览来源", view.VisibleCount == 0 && view.SelectedRecord == null);
+            store.AddMessages([
+                Record("sender-old", "empty", "待采集会话", "无群昵称的已有记录", null),
+                Record("sender-id", "empty", "待采集会话", "无联系人名称的消息", null) with { Message = old with { Sender = " " } },
+                Record("sender-system", "empty", "待采集会话", "未提供发送人资料的消息", null) with { Message = old with { Sender = "", SenderId = "" } }
+            ]);
+            view.RefreshRecords();
+            var senderCells = view.CurrentGrid!.Rows.Cast<DataGridViewRow>().ToDictionary(row => ((CaptureRecord)row.Tag!).Id, row => (string?)row.Cells["sender"].Value);
+            check("缺少群昵称的旧记录直接显示已保存发送人", senderCells["sender-old"] == old.Sender);
+            check("发送人名称缺失时显示微信标识", senderCells["sender-id"] == old.SenderId);
+            check("发送人资料均缺失时明确标注系统或未知", senderCells["sender-system"] == "未知发送人 / 系统");
             view.SelectConversation("a"); store.RemoveTarget("a"); view.RefreshRecords();
             check("移除绑定后保留历史标签及消息", view.SelectedConversationId == "a" && view.SelectedRecord?.Id == "a1");
         }

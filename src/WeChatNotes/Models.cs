@@ -13,7 +13,12 @@ public sealed record Target(string Id, string Name, string WindowTitle, int Widt
 public sealed record CaptureRecord(string Id, string TargetId, string TargetName, DateTimeOffset ObservedAt,
     string Text, string AddedText, string ImagePath, string Note, RawMessageInfo? Message = null);
 public sealed record RawMessageInfo(string SourceDatabase, long LocalId, long ServerId, string SenderId,
-    string Sender, DateTimeOffset SentAt, long RawType, string RawContent, string? GroupNickname = null);
+    string Sender, DateTimeOffset SentAt, long RawType, string RawContent, string? GroupNickname = null)
+{
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string DisplaySender => !string.IsNullOrWhiteSpace(Sender) ? Sender
+        : !string.IsNullOrWhiteSpace(SenderId) ? SenderId : "未知发送人 / 系统";
+}
 public sealed record Requirement(string Id, string Title, string Notes, string Status, string CaptureId, DateTimeOffset CreatedAt);
 
 public static partial class TextDiff
