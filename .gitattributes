@@ -8,3 +8,6 @@
 *.cmd text eol=crlf
 *.png binary
 *.ico binary
+
+# 将第三方 SILK SDK 排除出语言统计
+native/silk/** linguist-vendored
