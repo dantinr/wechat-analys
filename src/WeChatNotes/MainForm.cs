@@ -9,8 +9,9 @@ public sealed class MainForm : Form
     private readonly System.Windows.Forms.Timer timer = new();
     private CancellationTokenSource cancellation = new();
     private readonly DataGridView targets = Grid();
+    private readonly ContextMenuStrip targetMenu = new();
     private readonly ConversationRecords captures;
-    private readonly TextBox search = new() { Width = 285, PlaceholderText = "搜索当前标签的全部已采集消息" };
+    private readonly TextBox search = new() { Width = 285, PlaceholderText = "搜索当前标签的全部已采集消息", AccessibleName = "会话搜索" };
     private readonly TextBox detail = new() { Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Vertical, Dock = DockStyle.Fill, BorderStyle = BorderStyle.None };
     private readonly Button locateFile;
     private readonly Label fileStatus = new() { Dock = DockStyle.Fill, AutoEllipsis = true, ForeColor = Color.DimGray };
@@ -23,6 +24,7 @@ public sealed class MainForm : Form
     private readonly Button exportCurrent;
     private bool exporting;
     private bool closingConversation;
+    private bool readingConversation;
     private bool closing;
     private bool allowClose;
 
@@ -56,6 +58,11 @@ public sealed class MainForm : Form
         targets.Columns["number"]!.SortMode = DataGridViewColumnSortMode.NotSortable;
         targets.Columns.Add("name", "记录会话"); targets.Columns.Add("window", "记录起点"); targets.Columns.Add("status", "采集状态");
         targets.Columns["name"]!.FillWeight = 25; targets.Columns["window"]!.FillWeight = 25; targets.Columns["status"]!.FillWeight = 70;
+        targets.AccessibleName = "记录会话";
+        targetMenu.Items.Add("读取记录", null, async (_, _) => { if (targetMenu.Tag is string id) await ReadConversation(id); });
+        targetMenu.Items.Add("搜索", null, (_, _) => { if (targetMenu.Tag is string id) SearchConversation(id); });
+        targetMenu.Items.Add("移除对话", null, (_, _) => { if (targetMenu.Tag is string id) CloseConversation(id); });
+        targets.MouseUp += (_, e) => { if (e.Button == MouseButtons.Right) ShowTargetMenu(e.Location); };
         layout.Controls.Add(targets, 0, 2);
         var filter = new FlowLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(0, 8, 0, 0) };
         filter.Controls.Add(search);
@@ -98,7 +105,7 @@ public sealed class MainForm : Form
         };
         recorder.Recorded += RefreshRecords;
         FormClosing += ClosingAsync;
-        FormClosed += (_, _) => { timer.Dispose(); cancellation.Dispose(); recorder.Dispose(); };
+        FormClosed += (_, _) => { targetMenu.Dispose(); timer.Dispose(); cancellation.Dispose(); recorder.Dispose(); };
         Shown += (_, _) => split.SplitterDistance = Math.Clamp((int)(split.ClientSize.Width * .58), split.Panel1MinSize, split.ClientSize.Width - split.Panel2MinSize - split.SplitterWidth);
         RefreshTargets(); RefreshRecords();
     }
@@ -124,6 +131,51 @@ public sealed class MainForm : Form
         targets.Rows.Clear(); foreach (var item in store.Targets())
         {
             int row = targets.Rows.Add(targets.Rows.Count + 1, item.Name, item.SourceRoot == null ? "旧版画面绑定" : item.FromUnix == 0 ? "全部本地历史" : DateTimeOffset.FromUnixTimeSeconds(item.FromUnix).ToLocalTime().ToString("MM-dd HH:mm"), item.SourceRoot == null ? "历史绑定 · 请添加原文会话" : "待开始 · 保持微信登录"); targets.Rows[row].Tag = item.Id;
+        }
+    }
+    internal ContextMenuStrip? ShowTargetMenu(Point location)
+    {
+        targetMenu.Close(); targetMenu.Tag = null;
+        if (exporting || closing || closingConversation || readingConversation) return null;
+        var hit = targets.HitTest(location.X, location.Y);
+        if (hit.Type != DataGridViewHitTestType.Cell || hit.RowIndex < 0 || targets.Rows[hit.RowIndex].Tag is not string id) return null;
+        targets.CurrentCell = targets.Rows[hit.RowIndex].Cells[hit.ColumnIndex];
+        targets.Rows[hit.RowIndex].Selected = true;
+        targetMenu.Tag = id; targetMenu.Show(targets, location); return targetMenu;
+    }
+    private void SearchConversation(string id)
+    {
+        if (exporting || closing || closingConversation || readingConversation || !captures.SelectConversation(id)) return;
+        targetMenu.Close();
+        search.Focus(); search.SelectAll();
+    }
+    private async Task ReadConversation(string id)
+    {
+        if (exporting || closing || closingConversation || readingConversation || !store.Targets().Any(t => t.Id == id)) return;
+        bool wasRecording = timer.Enabled;
+        readingConversation = true; Enabled = false;
+        try
+        {
+            await PauseAndDrain();
+            if (IsDisposed || closing) return;
+            search.Clear(); RefreshRecords(); captures.SelectConversation(id);
+            cancellation.Dispose(); cancellation = new();
+            badge.Text = "正在读取所选会话…";
+            await recorder.PollAsync(cancellation.Token, id);
+            if (IsDisposed || closing) return;
+            RefreshRecords();
+            badge.Text = "所选会话读取结束 · 详情见采集状态";
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception ex) { if (!IsDisposed && !closing) MessageBox.Show(this, ex.Message, "无法读取记录"); }
+        finally
+        {
+            readingConversation = false;
+            if (!IsDisposed && !closing)
+            {
+                if (wasRecording && store.Targets().Count > 0) ResumeRecording();
+                Enabled = true;
+            }
         }
     }
     private void RefreshRecords()
@@ -173,7 +225,7 @@ public sealed class MainForm : Form
 
     private async void CloseConversation(string id)
     {
-        if (exporting || closing || closingConversation) return;
+        if (exporting || closing || closingConversation || readingConversation) return;
         bool wasRecording = timer.Enabled;
         closingConversation = true; Enabled = false;
         try
@@ -188,7 +240,7 @@ public sealed class MainForm : Form
     }
     private async Task Poll()
     {
-        if (exporting || closing || recorder.IsBusy) return;
+        if (exporting || closing || closingConversation || readingConversation || recorder.IsBusy) return;
         if (store.Targets().Count == 0) { badge.Text = "请先添加会话"; return; }
         if (cancellation.IsCancellationRequested) { cancellation.Dispose(); cancellation = new(); recorder.Resume(); }
         try { await recorder.PollAsync(cancellation.Token); }

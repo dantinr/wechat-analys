@@ -56,6 +56,63 @@ internal static class ConversationOptionsSelfTest
             long thirty = ((ImportRange)history.SelectedItem!).FromUnix(now);
             check("15天和30天选项按添加时间跨年计算正确起点", fifteen == new DateTimeOffset(2025, 12, 21, 10, 30, 0, TimeSpan.FromHours(8)).ToUnixTimeSeconds() && thirty == new DateTimeOffset(2025, 12, 6, 10, 30, 0, TimeSpan.FromHours(8)).ToUnixTimeSeconds());
         }
+        CheckTargetMenu(root, check);
         host.Close();
+    }
+
+    private static void CheckTargetMenu(string root, Action<string, bool> check)
+    {
+        string data = Path.Combine(root, "target-menu-store");
+        using var store = new Store(data);
+        // Legacy targets exercise scoped reads without discovering accounts or accessing WeChat.
+        foreach (string id in new[] { "a", "b", "c" })
+        {
+            store.SaveTarget(new(id, "合成会话 " + id, "", 0, 0, 0, 0, 0, 0));
+            store.AddMessages([new(id + "-message", id, "合成会话 " + id, DateTimeOffset.Now, id + "记录", id + "记录", "", "合成菜单测试")]);
+        }
+        using var form = new MainForm(store) { Opacity = 0, ShowInTaskbar = false };
+        form.Show();
+        IEnumerable<Control> Descendants(Control parent) => parent.Controls.Cast<Control>().SelectMany(c => new[] { c }.Concat(Descendants(c)));
+        var controls = Descendants(form).ToArray();
+        var grid = controls.OfType<DataGridView>().Single(c => c.AccessibleName == "记录会话");
+        // Leave actual empty body space even with the fixed-height target list.
+        foreach (DataGridViewRow row in grid.Rows) row.Height = 22;
+        var records = controls.OfType<ConversationRecords>().Single();
+        var search = controls.OfType<TextBox>().Single(c => c.AccessibleName == "会话搜索");
+        ContextMenuStrip Menu(string id)
+        {
+            var row = grid.Rows.Cast<DataGridViewRow>().Single(r => (string?)r.Tag == id);
+            grid.FirstDisplayedScrollingRowIndex = row.Index;
+            var rect = grid.GetCellDisplayRectangle(1, row.Index, false);
+            var menu = form.ShowTargetMenu(new(rect.Left + rect.Width / 2, rect.Top + rect.Height / 2))!;
+            menu.Opacity = 0;
+            return menu;
+        }
+        void Click(string id, string action)
+        {
+            var menu = Menu(id);
+            menu.Items.Cast<ToolStripItem>().Single(item => item.Text == action).PerformClick(); menu.Close();
+        }
+        check("会话列表右键表头和空白处不显示操作菜单", form.ShowTargetMenu(new(10, 5)) == null && form.ShowTargetMenu(new(10, grid.ClientSize.Height - 3)) == null);
+        var menu = Menu("b");
+        check("右键准确选中点击的会话并显示读取搜索移除功能", (string?)grid.CurrentRow?.Tag == "b" && menu.Items.Cast<ToolStripItem>().Select(i => i.Text).SequenceEqual(["读取记录", "搜索", "移除对话"]) && records.SelectedConversationId == "a");
+        menu.Close(); search.Text = "不匹配的搜索词";
+        Click("b", "读取记录");
+        check("读取记录切换到右键会话并清除旧搜索条件", records.SelectedConversationId == "b" && search.Text == "" && records.SelectedRecord?.Id == "b-message" && form.Enabled);
+        check("读取记录仅同步所选会话且不读取其他会话", grid.Rows.Cast<DataGridViewRow>().Single(r => (string?)r.Tag == "b").Cells["status"].Value?.ToString()?.Contains("旧版画面绑定") == true && grid.Rows.Cast<DataGridViewRow>().Where(r => (string?)r.Tag != "b").All(r => r.Cells["status"].Value?.ToString()?.Contains("已暂停") == true));
+        search.Text = "记录"; Click("a", "搜索");
+        check("搜索菜单切换会话并聚焦全选关键词且结果隔离", records.SelectedConversationId == "a" && search.Focused && search.SelectedText == "记录" && records.VisibleCount == 1 && records.SelectedRecord?.TargetId == "a");
+        Click("c", "移除对话");
+        check("移除未打开对话保留当前会话及历史并连续编号", records.SelectedConversationId == "a" && !records.ConversationIds.Contains("c") && store.Captures(targetId: "c").Count == 1 && grid.Rows.Cast<DataGridViewRow>().Select(r => (int)r.Cells["number"].Value!).SequenceEqual([1, 2]) && form.Enabled);
+        Click("a", "移除对话"); Click("b", "移除对话");
+        check("列表移除最后一个对话清空标签和预览且保留消息", records.SelectedConversationId == null && records.SelectedRecord == null && grid.Rows.Count == 0 && store.Captures().Count == 3 && form.Enabled);
+        using (var reopened = new Store(data))
+            check("列表移除状态重启后保留且重新添加可恢复原消息", reopened.Targets().Count == 0 && reopened.CaptureConversations().Count == 0 && Restore());
+        bool Restore()
+        {
+            store.SaveTarget(new("b", "合成会话 b", "", 0, 0, 0, 0, 0, 0));
+            return store.CaptureConversations().Single().Id == "b" && store.Captures(targetId: "b").Single().Id == "b-message";
+        }
+        form.Close();
     }
 }

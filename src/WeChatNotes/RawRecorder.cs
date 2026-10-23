@@ -14,13 +14,13 @@ internal sealed class RawRecorder(Store store) : IDisposable
         return source;
     }
     internal void Resume() { }
-    internal async Task PollAsync(CancellationToken token)
+    internal async Task PollAsync(CancellationToken token, string? targetId = null)
     {
         if (IsBusy) return;
         IsBusy = true;
         try
         {
-            var targets = store.Targets();
+            var targets = store.Targets().Where(t => targetId == null || t.Id == targetId).ToList();
             foreach (var old in targets.Where(t => t.SourceRoot == null)) Status?.Invoke(old.Id, "旧版画面绑定，仅保留历史记录；请添加原文会话");
             foreach (var group in targets.Where(t => t.SourceRoot != null && t.ConversationId != null).GroupBy(t => t.SourceRoot!, StringComparer.OrdinalIgnoreCase))
             {
