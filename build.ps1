@@ -57,6 +57,9 @@ Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'README.md') -Destination (Join-
 foreach ($wechatNotesNotice in @('LICENSE', 'THIRD_PARTY_NOTICES.md', 'VERSION')) {
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot $wechatNotesNotice) -Destination $wechatNotesOutput -Force
 }
+$wechatNotesCodecNotices = Join-Path $wechatNotesOutput 'licenses'
+New-Item -ItemType Directory -Path $wechatNotesCodecNotices -Force | Out-Null
+Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'native/SILK-LICENSE.txt') -Destination (Join-Path $wechatNotesCodecNotices 'SILK-SDK.txt') -Force
 $wechatNotesSource = Join-Path $wechatNotesOutput 'source'
 $wechatNotesSourceProject = Join-Path $wechatNotesSource 'src\WeChatNotes'
 New-Item -ItemType Directory -Path $wechatNotesSourceProject -Force | Out-Null
@@ -65,4 +68,5 @@ foreach ($wechatNotesSourceFile in @('LICENSE', 'README.md', 'VERSION', 'THIRD_P
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot $wechatNotesSourceFile) -Destination $wechatNotesSource -Force
 }
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot '.github') -Destination $wechatNotesSource -Recurse -Force
+Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'native') -Destination $wechatNotesSource -Recurse -Force
 Write-Host "程序已生成：$wechatNotesOutput"

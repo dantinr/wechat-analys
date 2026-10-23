@@ -8,6 +8,10 @@ NuGet 依赖：
 - [ZstdSharp.Port 0.8.8](https://github.com/oleg-st/ZstdSharp)：MIT，Copyright (c) 2021 Oleg Stepanischev。下附许可证。
 - 独立 EXE 版本包含 .NET 和 Windows Desktop 运行环境，其对应许可证及第三方说明随包附在 `licenses/` 下。
 
+语音解码使用 Skype SILK SDK 1.0.9（Copyright (c) 2006–2012 Skype Limited），采用 SDK 各源文件中的 BSD 风格许可。源码来自 [DrAbcOfficial/SilkSharp 提交 3dbfc2bd](https://github.com/DrAbcOfficial/SilkSharp/tree/3dbfc2bd1b090094e221187c3a9d25583fa11916/silkcodec) 的 SDK 部分，保存在 `native/silk/`，保留各文件原有版权及许可。未使用其文件转换包装器或 NuGet 运行库。本项目的 `native/decoder.c` 内存解码包装器按 GPL-3.0-or-later 提供。发布包附完整构建源码 `source/native/`，SDK 许可另附在 `licenses/SILK-SDK.txt`；仓库副本为 `native/SILK-LICENSE.txt`。
+
+语音测试样本是本项目生成的双频合成音，不含录音、对话或个人数据；参考结果由独立 SDK 解码得到。
+
 ## ZstdSharp MIT License
 
 Copyright (c) 2021 Oleg Stepanischev

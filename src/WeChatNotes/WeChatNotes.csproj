@@ -12,7 +12,11 @@
     <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
   </PropertyGroup>
   <ItemGroup>
+    <EmbeddedResource Include="$(MSBuildProjectDirectory)\obj\native\WeChatNotesSilk.dll" LogicalName="WeChatNotes.Native.Silk.dll" />
     <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.11" />
     <PackageReference Include="ZstdSharp.Port" Version="0.8.8" />
   </ItemGroup>
+  <Target Name="BuildSilkDecoder" BeforeTargets="PrepareForBuild" Condition="'$(DesignTimeBuild)' != 'true'">
+    <Exec Command="pwsh -NoLogo -NoProfile -NonInteractive -File &quot;$(MSBuildProjectDirectory)\..\..\native\build.ps1&quot; -OutputDirectory &quot;$(MSBuildProjectDirectory)\obj\native&quot;" />
+  </Target>
 </Project>
