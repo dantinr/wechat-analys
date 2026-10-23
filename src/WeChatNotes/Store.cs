@@ -19,6 +19,9 @@ public sealed class Store : IDisposable
             PRAGMA journal_mode=WAL;
             PRAGMA synchronous=FULL;
             CREATE TABLE IF NOT EXISTS targets(id TEXT PRIMARY KEY, json TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS target_sources(id TEXT PRIMARY KEY, source_root TEXT NOT NULL);
+            INSERT OR IGNORE INTO target_sources(id,source_root)
+                SELECT id,json_extract(json,'$.SourceRoot') FROM targets WHERE json_extract(json,'$.SourceRoot') IS NOT NULL;
             CREATE TABLE IF NOT EXISTS captures(id TEXT PRIMARY KEY, target_id TEXT NOT NULL, observed_at TEXT NOT NULL, json TEXT NOT NULL);
             CREATE INDEX IF NOT EXISTS captures_target_time ON captures(target_id, observed_at);
             CREATE TABLE IF NOT EXISTS requirements(id TEXT PRIMARY KEY, json TEXT NOT NULL);
@@ -49,7 +52,23 @@ public sealed class Store : IDisposable
         return result;
     }
     public List<Requirement> Requirements() => Read<Requirement>("SELECT json FROM requirements ORDER BY rowid");
-    public void SaveTarget(Target target) => Execute("INSERT OR REPLACE INTO targets(id,json) VALUES($id,$json)", target.Id, target);
+    public void SaveTarget(Target target)
+    {
+        Execute("INSERT OR REPLACE INTO targets(id,json) VALUES($id,$json)", target.Id, target);
+        if (!string.IsNullOrEmpty(target.SourceRoot))
+        {
+            using var command = db.CreateCommand();
+            command.CommandText = "INSERT OR REPLACE INTO target_sources(id,source_root) VALUES($id,$root)";
+            command.Parameters.AddWithValue("$id", target.Id); command.Parameters.AddWithValue("$root", target.SourceRoot); command.ExecuteNonQuery();
+        }
+    }
+    internal Dictionary<string, string> TargetSources()
+    {
+        using var command = db.CreateCommand(); command.CommandText = "SELECT id,source_root FROM target_sources";
+        using var reader = command.ExecuteReader(); var sources = new Dictionary<string, string>(StringComparer.Ordinal);
+        while (reader.Read()) sources[reader.GetString(0)] = reader.GetString(1);
+        return sources;
+    }
     public void RemoveTarget(string id) => Execute("DELETE FROM targets WHERE id=$id", id, null);
     public void SaveRequirement(Requirement item) => Execute("INSERT OR REPLACE INTO requirements(id,json) VALUES($id,$json)", item.Id, item);
 

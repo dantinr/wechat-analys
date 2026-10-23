@@ -121,7 +121,7 @@ internal sealed class RawChatSource(string root) : IDisposable
                         groupNicknames.GetValueOrDefault((target.ConversationId!, sender)));
                     string text = content.Length > 0 ? content : $"[{kind}，无文字正文]";
                     result.Add(new(id, target.Id, target.Name, DateTimeOffset.Now.ToOffset(TimeSpan.FromHours(8)), text, text, "",
-                        $"直接读取本地消息 · {kind}。图片、语音和附件仅保留数据库中的说明或 XML，不提取文件内容。", message));
+                        $"直接读取本地消息 · {kind}。文件附件在导出时匹配本机已下载文件；图片、语音和视频不提取原文件。", message));
                 }
             }
         }
