@@ -5,8 +5,7 @@ $ErrorActionPreference = 'Stop'
 $wechatNotesPackageRoot = Join-Path $PSScriptRoot 'artifacts\packages'
 $wechatNotesStage = Join-Path $wechatNotesPackageRoot ('staging-' + [Guid]::NewGuid().ToString('N'))
 $wechatNotesApp = Join-Path $wechatNotesStage 'WeChatNotes'
-[xml]$wechatNotesProject = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'src\WeChatNotes\WeChatNotes.csproj') -Raw
-$wechatNotesVersion = [string]$wechatNotesProject.Project.PropertyGroup.Version
+$wechatNotesVersion = (Get-Content -LiteralPath (Join-Path $PSScriptRoot 'VERSION') -Raw).Trim()
 if ($wechatNotesVersion -notmatch '^\d+\.\d+\.\d+([-.][A-Za-z0-9.]+)?$') { throw '项目版本号无效。' }
 & (Join-Path $PSScriptRoot 'build.ps1') -OutputDirectory $wechatNotesApp -SkipShortcut -Standalone:$Standalone
 $wechatNotesEntry = if ($Standalone) { 'WeChatNotes.exe' } else { 'WeChatNotes.dll' }

@@ -16,7 +16,7 @@ public sealed class MainForm : Form
     private readonly PictureBox picture = new() { Dock = DockStyle.Fill, SizeMode = PictureBoxSizeMode.Zoom, BackColor = Color.FromArgb(238, 241, 245) };
     private readonly Label badge = new() { AutoSize = true, ForeColor = Color.FromArgb(85, 99, 113), Text = "已暂停", Padding = new Padding(10) };
     private readonly Label footer = new() { Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft, ForeColor = Color.FromArgb(85, 99, 113) };
-    private readonly NumericUpDown interval = new() { Minimum = 1, Maximum = 60, Value = 3, Width = 55 };
+    private readonly NumericUpDown interval = new() { Minimum = 1, Maximum = 60, Value = 30, Width = 55 };
     private readonly Button start;
     private readonly Button once;
     private List<CaptureRecord> recent = [];
@@ -27,14 +27,14 @@ public sealed class MainForm : Form
     public MainForm(Store store)
     {
         this.store = store; recorder = new(store);
-        Text = "微信需求记录"; Width = 1380; Height = 940; MinimumSize = new(1060, 760);
+        Text = $"微信需求记录 v{Application.ProductVersion}"; Width = 1380; Height = 940; MinimumSize = new(1060, 760);
         StartPosition = FormStartPosition.CenterScreen; Font = new("Microsoft YaHei UI", 10);
         BackColor = Color.FromArgb(246, 248, 250);
         var layout = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(22, 18, 22, 10), ColumnCount = 1, RowCount = 6 };
         foreach (var style in new RowStyle[] { new(SizeType.Absolute, 90), new(SizeType.Absolute, 46), new(SizeType.Absolute, 135), new(SizeType.Absolute, 48), new(SizeType.Percent, 100), new(SizeType.Absolute, 40) }) layout.RowStyles.Add(style);
         var header = new Panel { Dock = DockStyle.Fill };
         header.Controls.Add(new Label { Text = "微信需求记录", Location = new(0, 0), AutoSize = true, Font = new("Microsoft YaHei UI", 24, FontStyle.Bold), ForeColor = Color.FromArgb(24, 41, 57) });
-        header.Controls.Add(new Label { Text = "将讨论留在本地，让每一条需求都有来源。", Location = new(3, 52), AutoSize = true, ForeColor = Color.FromArgb(95, 110, 125) });
+        header.Controls.Add(new Label { Text = $"v{Application.ProductVersion} · 将讨论留在本地，让每一条需求都有来源。", Location = new(3, 52), AutoSize = true, ForeColor = Color.FromArgb(95, 110, 125) });
         badge.Location = new(450, 12); header.Controls.Add(badge); layout.Controls.Add(header, 0, 0);
         var toolbar = new FlowLayoutPanel { Dock = DockStyle.Fill, WrapContents = false };
         toolbar.Controls.Add(Button("添加会话", AddTarget, true));
@@ -44,7 +44,7 @@ public sealed class MainForm : Form
         toolbar.Controls.Add(new Label { Text = "间隔（秒）", AutoSize = true, Padding = new Padding(8, 8, 0, 0) }); toolbar.Controls.Add(interval);
         toolbar.Controls.Add(Button("导出全部", Export)); toolbar.Controls.Add(Button("打开数据目录", (_, _) => OpenFolder(store.Root)));
         toolbar.Controls.Add(Button("使用说明", (_, _) => MessageBox.Show(this,
-            "1. 保持 Windows 微信登录。\n2. 点击“添加会话”→“读取会话列表”，勾选群或联系人，可选择首次导入范围。\n3. 点击“开始记录”，默认每 3 秒同步一次。窗口可最小化，无需切换聊天。\n4. 选中原始消息，点击“整理为需求”，编辑需求名称、说明和状态。\n5. “导出全部”生成 Markdown、CSV、JSONL 和需求文档。\n\n通过只读连接本地聊天数据库获取原文，不使用 OCR。完整解密数据库只存在于内存中，只保存选定会话的消息。\n图片、语音和附件仅保留文字说明 / XML，不导出原文件。只读取已经同步到本机的消息。\n关闭程序、电脑休眠或微信退出期间停止同步；重启后点击开始可补采仍在本地的消息。\n微信升级可能需要适配。", "使用说明")));
+            "1. 保持 Windows 微信登录。\n2. 点击“添加会话”→“读取会话列表”，勾选群或联系人，可选择首次导入范围。\n3. 点击“开始记录”，默认每 30 秒同步一次。窗口可最小化，无需切换聊天。\n4. 选中原始消息，点击“整理为需求”，编辑需求名称、说明和状态。\n5. “导出全部”生成 Markdown、CSV、JSONL 和需求文档。\n\n通过只读连接本地聊天数据库获取原文，不使用 OCR。完整解密数据库只存在于内存中，只保存选定会话的消息。\n图片、语音和附件仅保留文字说明 / XML，不导出原文件。只读取已经同步到本机的消息。\n关闭程序、电脑休眠或微信退出期间停止同步；重启后点击开始可补采仍在本地的消息。\n微信升级可能需要适配。", "使用说明")));
         layout.Controls.Add(toolbar, 0, 1);
         targets.Columns.Add("name", "记录会话"); targets.Columns.Add("window", "记录起点"); targets.Columns.Add("status", "采集状态");
         targets.Columns[0].FillWeight = 25; targets.Columns[1].FillWeight = 25; targets.Columns[2].FillWeight = 70;
@@ -68,7 +68,7 @@ public sealed class MainForm : Form
         requirementsTab.Controls.Add(requirements); tabs.TabPages.AddRange([recordsTab, requirementsTab]); layout.Controls.Add(tabs, 0, 4);
         layout.Controls.Add(footer, 0, 5); Controls.Add(layout);
         interval.ValueChanged += (_, _) => timer.Interval = (int)interval.Value * 1000;
-        timer.Interval = 3000; timer.Tick += async (_, _) => await Poll();
+        timer.Interval = (int)interval.Value * 1000; timer.Tick += async (_, _) => await Poll();
         search.TextChanged += (_, _) => PopulateCaptures();
         captures.SelectionChanged += (_, _) => ShowCapture();
         requirements.CellDoubleClick += EditRequirement;

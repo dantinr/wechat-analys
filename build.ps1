@@ -54,14 +54,14 @@ if ($Standalone) { $wechatNotesLauncher = "@echo off`r`n`"%~dp0WeChatNotes.exe`"
 else { $wechatNotesLauncher = "@echo off`r`ndotnet `"%~dp0WeChatNotes.dll`"`r`nif errorlevel 1 pause`r`n" }
 [System.IO.File]::WriteAllText((Join-Path $wechatNotesOutput '启动.cmd'), $wechatNotesLauncher, [System.Text.Encoding]::ASCII)
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'README.md') -Destination (Join-Path $wechatNotesOutput '使用说明.md') -Force
-foreach ($wechatNotesNotice in @('LICENSE', 'THIRD_PARTY_NOTICES.md')) {
+foreach ($wechatNotesNotice in @('LICENSE', 'THIRD_PARTY_NOTICES.md', 'VERSION')) {
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot $wechatNotesNotice) -Destination $wechatNotesOutput -Force
 }
 $wechatNotesSource = Join-Path $wechatNotesOutput 'source'
 $wechatNotesSourceProject = Join-Path $wechatNotesSource 'src\WeChatNotes'
 New-Item -ItemType Directory -Path $wechatNotesSourceProject -Force | Out-Null
 Get-ChildItem -LiteralPath (Join-Path $PSScriptRoot 'src\WeChatNotes') -File | Copy-Item -Destination $wechatNotesSourceProject -Force
-foreach ($wechatNotesSourceFile in @('LICENSE', 'README.md', 'THIRD_PARTY_NOTICES.md', 'CONTRIBUTING.md', 'SECURITY.md', 'CHANGELOG.md', 'build.ps1', 'test.ps1', 'package.ps1', 'global.json', '.gitignore', '.gitattributes', '.editorconfig')) {
+foreach ($wechatNotesSourceFile in @('LICENSE', 'README.md', 'VERSION', 'THIRD_PARTY_NOTICES.md', 'CONTRIBUTING.md', 'SECURITY.md', 'CHANGELOG.md', 'build.ps1', 'test.ps1', 'package.ps1', 'global.json', '.gitignore', '.gitattributes', '.editorconfig')) {
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot $wechatNotesSourceFile) -Destination $wechatNotesSource -Force
 }
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot '.github') -Destination $wechatNotesSource -Recurse -Force
