@@ -117,6 +117,7 @@ internal static class RawSelfTest
                 Check("重启后仍能去重和恢复需求", reopened.Captures().Count == 2 && reopened.Requirements().Count == 1 && reopened.AddMessages([record with { Message = info with { ServerId = 500 } }]) == 0);
             ConversationSelfTest.Run(root, report, Check);
             AttachmentSelfTest.Run(root, Check);
+            VoiceSelfTest.Run(root, Check);
         }
         catch (Exception ex) { results.Add(new { name = "异常", passed = false, detail = ex.ToString() }); Environment.ExitCode = 1; }
         File.WriteAllText(report, JsonSerializer.Serialize(results, new JsonSerializerOptions { WriteIndented = true, Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping }));

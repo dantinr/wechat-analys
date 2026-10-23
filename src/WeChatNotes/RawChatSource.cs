@@ -24,6 +24,8 @@ internal sealed class RawChatSource(string root) : IDisposable
         string path = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "xwechat_files");
         return Directory.Exists(path) ? Directory.GetDirectories(path).Select(p => Path.Combine(p, "db_storage")).Where(Directory.Exists).ToArray() : [];
     }
+    internal static string TargetIdFor(string root, string conversation) =>
+        Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(Path.GetFullPath(root).ToUpperInvariant() + "|" + conversation))).ToLowerInvariant();
     private string[] MessageFiles() => Directory.GetFiles(Path.Combine(Root, "message"), "message_*.db")
         .Where(p => Regex.IsMatch(Path.GetFileName(p), @"^message_\d+\.db$", RegexOptions.CultureInvariant)).Order().ToArray();
     internal void Connect(Action<string>? progress, CancellationToken token)
@@ -121,7 +123,7 @@ internal sealed class RawChatSource(string root) : IDisposable
                         groupNicknames.GetValueOrDefault((target.ConversationId!, sender)));
                     string text = content.Length > 0 ? content : $"[{kind}，无文字正文]";
                     result.Add(new(id, target.Id, target.Name, DateTimeOffset.Now.ToOffset(TimeSpan.FromHours(8)), text, text, "",
-                        $"直接读取本地消息 · {kind}。文件附件在导出时匹配本机已下载文件；图片、语音和视频不提取原文件。", message));
+                        $"直接读取本地消息 · {kind}。导出时一并保存可匹配的本地文件附件和语音；图片和视频不提取原文件。", message));
                 }
             }
         }

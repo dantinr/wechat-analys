@@ -44,7 +44,7 @@ public sealed class MainForm : Form
         toolbar.Controls.Add(new Label { Text = "间隔（秒）", AutoSize = true, Padding = new Padding(8, 8, 0, 0) }); toolbar.Controls.Add(interval);
         toolbar.Controls.Add(Button("打开数据目录", (_, _) => OpenFolder(store.Root)));
         toolbar.Controls.Add(Button("使用说明", (_, _) => MessageBox.Show(this,
-            "1. 保持 Windows 微信登录。\n2. 点击“添加会话”→“读取会话列表”，勾选群或联系人，可选择首次导入范围。\n3. 点击“开始记录”，默认每 30 秒同步一次。窗口可最小化，无需切换聊天。\n4. 选中原始消息，点击“整理为需求”，编辑需求名称、说明和状态。\n5. 选择具体会话标签，点击“导出当前聊天记录”，生成该会话的 Markdown、CSV、JSONL 和关联需求文档。\n\n通过只读连接本地聊天数据库获取原文，不使用 OCR。完整解密数据库只存在于内存中，只保存选定会话的消息。\n已下载的普通文件附件可在导出时一并保存；图片、语音和视频仅保留文字说明 / XML。只读取已经同步到本机的消息。\n关闭程序、电脑休眠或微信退出期间停止同步；重启后点击开始可补采仍在本地的消息。\n微信升级可能需要适配。", "使用说明")));
+            "1. 保持 Windows 微信登录。\n2. 点击“添加会话”→“读取会话列表”，勾选群或联系人，可选择首次导入范围。\n3. 点击“开始记录”，默认每 30 秒同步一次。窗口可最小化，无需切换聊天。\n4. 选中原始消息，点击“整理为需求”，编辑需求名称、说明和状态。\n5. 选择具体会话标签，点击“导出当前聊天记录”，生成该会话的 Markdown、CSV、JSONL 和关联需求文档。\n\n通过只读连接本地聊天数据库获取原文，不使用 OCR。完整解密数据库只存在于内存中，只保存选定会话的消息。\n已下载的普通文件附件和本地原始语音可在导出时一并保存，并在 Markdown 中添加链接。语音通常为 SILK 格式，未转文字；导出语音时请保持微信登录。图片和视频仅保留文字说明 / XML。只读取已经同步到本机的消息。\n关闭程序、电脑休眠或微信退出期间停止同步；重启后点击开始可补采仍在本地的消息。\n微信升级可能需要适配。", "使用说明")));
         layout.Controls.Add(toolbar, 0, 1);
         targets.Columns.Add("name", "记录会话"); targets.Columns.Add("window", "记录起点"); targets.Columns.Add("status", "采集状态");
         targets.Columns[0].FillWeight = 25; targets.Columns[1].FillWeight = 25; targets.Columns[2].FillWeight = 70;
@@ -202,7 +202,7 @@ public sealed class MainForm : Form
         if (dialog.ShowDialog(this) != DialogResult.OK) return;
         string folder = Path.Combine(dialog.SelectedPath, "微信需求导出_" + DateTimeOffset.UtcNow.ToOffset(TimeSpan.FromHours(8)).ToString("yyyyMMdd_HHmmss") + "_" + Guid.NewGuid().ToString("N")[..6]);
         exporting = true; Enabled = false;
-        badge.Text = "正在导出当前会话及本地附件…";
+        badge.Text = "正在导出当前会话、文件附件及语音…";
         try { await Task.Run(() => Exporter.Export(store, folder, targetId)); OpenFolder(folder); badge.Text = "当前会话导出完成 · 采集已暂停"; }
         catch (Exception ex) { MessageBox.Show(this, "导出未完成：" + ex.Message, "导出失败"); }
         finally { exporting = false; Enabled = true; }

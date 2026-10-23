@@ -6,7 +6,10 @@ namespace WeChatNotes;
 
 public static class Exporter
 {
-    public static void Export(Store store, string folder, string? targetId = null)
+    public static void Export(Store store, string folder, string? targetId = null) => Export(store, folder, targetId, null);
+
+    internal static void Export(Store store, string folder, string? targetId,
+        Func<string, IReadOnlyList<CaptureRecord>, Dictionary<string, VoicePayload>>? readVoices)
     {
         Directory.CreateDirectory(folder);
         var captures = store.Captures(targetId: targetId);
@@ -17,13 +20,14 @@ public static class Exporter
         var attachments = new Dictionary<string, ExportedAttachment>(StringComparer.Ordinal);
         foreach (var capture in captures)
             if (content[capture.Id].File is { } file) attachments[capture.Id] = copier.Copy(capture, file);
+        var voices = new VoiceExporter(store, folder, readVoices).Copy(captures);
         var utf8 = new UTF8Encoding(true);
         using (var json = new StreamWriter(Path.Combine(folder, "聊天记录.jsonl"), false, new UTF8Encoding(false)))
         using (var csv = new StreamWriter(Path.Combine(folder, "聊天记录.csv"), false, utf8))
         using (var markdown = new StreamWriter(Path.Combine(folder, "聊天记录.md"), false, utf8))
         {
-            csv.WriteLine("记录ID,会话,发送人,群昵称,发送时间,消息类型,消息原文,数据库原始正文,消息编号,本地编号,来源数据库,记录时间,旧版截图,说明");
-            markdown.WriteLine("# 微信聊天记录\n\n消息直接读取自本地数据库，时间为消息发送时间（UTC+08:00）。只包括选定会话及导入范围内、已同步到这台电脑的消息。可匹配的本地文件附件一并导出；图片、语音等保留数据库中的文字说明或 XML。旧版 OCR 记录会单独注明。\n");
+            csv.WriteLine("记录ID,会话,发送人,群昵称,发送时间,消息类型,消息原文,数据库原始正文,消息编号,本地编号,来源数据库,记录时间,旧版截图,说明,语音文件,语音导出状态");
+            markdown.WriteLine("# 微信聊天记录\n\n消息直接读取自本地数据库，时间为消息发送时间（UTC+08:00）。只包括选定会话及导入范围内、已同步到这台电脑的消息。可匹配的本地文件附件和原始语音一并导出；语音通常为 SILK 格式，未转文字。图片、视频等保留数据库中的文字说明或 XML。旧版 OCR 记录会单独注明。\n");
             foreach (var capture in captures)
             {
                 // Only generated GUID paths are copied. Exporting a database must never read arbitrary paths.
@@ -40,12 +44,14 @@ public static class Exporter
                     }
                 }
                 var message = capture.Message;
+                voices.TryGetValue(capture.Id, out var voice);
                 json.WriteLine(JsonSerializer.Serialize(capture with { ImagePath = imagePath }, new JsonSerializerOptions { Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping }));
-                csv.WriteLine(string.Join(',', new[] { capture.Id, capture.TargetName, message?.Sender ?? "旧版 OCR", message?.GroupNickname ?? "", message?.SentAt.ToString("O") ?? "", message == null ? "旧版 OCR" : RawChatSource.TypeName(message.RawType), capture.Text, message?.RawContent ?? capture.Text, message?.ServerId.ToString() ?? "", message?.LocalId.ToString() ?? "", message?.SourceDatabase ?? "", capture.ObservedAt.ToString("O"), imagePath, capture.Note }.Select(Csv)));
+                csv.WriteLine(string.Join(',', new[] { capture.Id, capture.TargetName, message?.Sender ?? "旧版 OCR", message?.GroupNickname ?? "", message?.SentAt.ToString("O") ?? "", message == null ? "旧版 OCR" : RawChatSource.TypeName(message.RawType), capture.Text, message?.RawContent ?? capture.Text, message?.ServerId.ToString() ?? "", message?.LocalId.ToString() ?? "", message?.SourceDatabase ?? "", capture.ObservedAt.ToString("O"), imagePath, capture.Note, voice?.RelativePath ?? "", voice?.Status ?? "" }.Select(Csv)));
                 markdown.WriteLine($"<a id=\"record-{capture.Id}\"></a>\n\n## {Md(capture.TargetName)} · {(message?.SentAt ?? capture.ObservedAt):yyyy-MM-dd HH:mm:ss zzz}\n\n发送人：{Md(message?.Sender ?? "旧版 OCR：发送人与时间需核对截图")}\n\n记录 ID：`{capture.Id}`\n\n{Quote(capture.Text)}\n\n{Md(capture.Note)}\n");
                 if (message != null) markdown.WriteLine($"消息编号：{message.ServerId}；本地编号：{message.LocalId}；来源：{Md(message.SourceDatabase)}\n");
                 if (message?.GroupNickname is { Length: > 0 } nickname) markdown.WriteLine($"群昵称：{Md(nickname)}\n");
                 if (attachments.TryGetValue(capture.Id, out var attachment)) markdown.WriteLine(AttachmentText(attachment) + "\n");
+                if (voice != null) markdown.WriteLine(VoiceText(voice) + "\n");
                 if (imagePath.Length > 0) markdown.WriteLine($"[查看旧版截图]({imagePath})\n");
             }
         }
@@ -57,7 +63,8 @@ public static class Exporter
             {
                 string sender = capture.Message?.DisplaySender ?? "旧版 OCR（发送人待核对）";
                 string prefix = multiple ? Md(capture.TargetName) + " · " : "";
-                string body = attachments.TryGetValue(capture.Id, out var attachment) ? AttachmentText(attachment) : Md(content[capture.Id].Text);
+                string body = attachments.TryGetValue(capture.Id, out var attachment) ? AttachmentText(attachment)
+                    : voices.TryGetValue(capture.Id, out var voice) ? VoiceText(voice) : Md(content[capture.Id].Text);
                 var time = (capture.Message?.SentAt ?? capture.ObservedAt).ToOffset(TimeSpan.FromHours(8));
                 dialogue.WriteLine($"{prefix}{Md(sender)}：{body} （{(capture.Message == null ? "记录于 " : "")}{time:yyyy-MM-dd HH:mm:ss zzz}）\n".ReplaceLineEndings(Environment.NewLine));
             }
@@ -69,7 +76,7 @@ public static class Exporter
             foreach (var item in requirements)
                 file.WriteLine($"## {Md(item.Title)}\n\n状态：{Md(item.Status)}\n\n{Quote(item.Notes)}\n\n[查看来源消息](聊天记录.md#record-{item.CaptureId})\n");
         }
-        File.WriteAllText(Path.Combine(folder, "使用说明.txt"), "本目录为微信需求记录的本地导出。\n对话内容.md：按发送时间排序的“发送人：对话内容 + 时间”，文件消息附带本地附件链接或未导出说明。\n聊天记录.md：消息原文、发送人、发送时间和来源编号。\n聊天记录.csv：适合表格软件。\n聊天记录.jsonl：每行一条完整记录，Message.RawContent 保留数据库原始正文。\n需求整理.md：手动整理的需求及来源链接。\n附件/：已下载并匹配的文件附件，保留原始文件名；不同消息分目录保存，避免同名文件覆盖。\n只包含本机已同步、选定会话及导入范围内的消息。未找到的文件在对话内容中明确标注；请先在微信下载后重新导出。图片、语音和视频不提取原文件。旧版 OCR 记录有明确标记。\n", utf8);
+        File.WriteAllText(Path.Combine(folder, "使用说明.txt"), "本目录为微信需求记录的本地导出。\n对话内容.md：按发送时间排序的“发送人：对话内容 + 时间”，文件和语音消息附带本地链接或未导出说明。\n聊天记录.md：消息原文、发送人、发送时间和来源编号。\n聊天记录.csv：适合表格软件，包含语音文件相对路径与导出状态。\n聊天记录.jsonl：每行一条完整记录，Message.RawContent 保留数据库原始正文。\n需求整理.md：手动整理的需求及来源链接。\n附件/：已下载并匹配的文件附件，保留原始文件名；不同消息分目录保存，避免同名文件覆盖。\n语音/：按会话、消息编号及发送时间匹配的本地原始音频，不同消息分目录保存；通常为 .silk，需支持该格式的播放器或转换工具，未进行语音转文字。未识别的音频格式按 .bin 原样保存。\n只包含本机已同步、选定会话及导入范围内的消息。未找到的文件或语音在对话内容中明确标注；请保持微信登录，先在微信下载或加载后重新导出。图片和视频不提取原文件。旧版 OCR 记录有明确标记。\n", utf8);
     }
 
     internal static string Csv(string text)
@@ -82,6 +89,9 @@ public static class Exporter
     private static string AttachmentText(ExportedAttachment file) => file.RelativePath is { } path
         ? $"文件 [{Md(file.Name)}]({string.Join('/', path.Split('/').Select(Uri.EscapeDataString))})"
         : $"文件：{Md(file.Name.Length == 0 ? "未提供文件名" : file.Name)}（附件未导出：{Md(file.Status)}）";
+    private static string VoiceText(ExportedAttachment voice) => voice.RelativePath is { } path
+        ? $"语音 [{Md(voice.Name)}]({string.Join('/', path.Split('/').Select(Uri.EscapeDataString))})（原始音频）"
+        : $"[语音]（语音未导出：{Md(voice.Status)}）";
     private static string Md(string text) => text.Replace("\\", "\\\\").Replace("[", "\\[").Replace("]", "\\]").Replace("*", "\\*").Replace("_", "\\_").Replace("`", "\\`").Replace("#", "\\#").Replace("&", "&amp;").Replace("<", "&lt;").Replace(">", "&gt;").ReplaceLineEndings("  " + Environment.NewLine);
     private static string Quote(string text) => string.Join('\n', Md(text).Replace("\r", "").Split('\n').Select(line => "> " + line));
 }

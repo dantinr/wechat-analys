@@ -1,6 +1,3 @@
-using System.Security.Cryptography;
-using System.Text;
-
 namespace WeChatNotes;
 
 internal sealed class RawBindDialog : Form
@@ -80,7 +77,7 @@ internal sealed class RawBindDialog : Form
         long from = history.SelectedIndex switch { 1 => now - 86400, 2 => now - 7 * 86400, 3 => 0, _ => now };
         foreach (var session in all.Where(s => selected.Contains(s.Username)))
         {
-            string id = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(root.ToUpperInvariant() + "|" + session.Username))).ToLowerInvariant();
+            string id = RawChatSource.TargetIdFor(root, session.Username);
             Results.Add(new(id, session.DisplayName, "", 0,0,0,0,0,0,root,session.Username,from));
         }
         DialogResult = DialogResult.OK;
