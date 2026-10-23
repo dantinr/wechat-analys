@@ -6,11 +6,12 @@ namespace WeChatNotes;
 
 public static class Exporter
 {
-    public static void Export(Store store, string folder)
+    public static void Export(Store store, string folder, string? targetId = null)
     {
         Directory.CreateDirectory(folder);
-        var captures = store.Captures();
-        var requirements = store.Requirements();
+        var captures = store.Captures(targetId: targetId);
+        var captureIds = captures.Select(c => c.Id).ToHashSet(StringComparer.Ordinal);
+        var requirements = store.Requirements().Where(r => targetId == null || captureIds.Contains(r.CaptureId)).ToList();
         var utf8 = new UTF8Encoding(true);
         using (var json = new StreamWriter(Path.Combine(folder, "聊天记录.jsonl"), false, new UTF8Encoding(false)))
         using (var csv = new StreamWriter(Path.Combine(folder, "聊天记录.csv"), false, utf8))

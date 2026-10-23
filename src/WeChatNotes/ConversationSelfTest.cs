@@ -78,6 +78,18 @@ internal static class ConversationSelfTest
         string export = Path.Combine(root, "nickname-export"); Exporter.Export(store, export);
         var exported = JsonSerializer.Deserialize<CaptureRecord>(File.ReadLines(Path.Combine(export, "聊天记录.jsonl")).First())!;
         check("JSONL CSV Markdown 导出均保留群昵称", exported.Message?.GroupNickname == "产品·小林🙂" && File.ReadAllText(Path.Combine(export, "聊天记录.csv")).Contains("群昵称") && File.ReadAllText(Path.Combine(export, "聊天记录.csv")).Contains("产品·小林🙂") && System.Net.WebUtility.HtmlDecode(File.ReadAllText(Path.Combine(export, "聊天记录.md"))).Contains("群昵称：产品·小林🙂"));
+        store.AddMessages([b with { Id = "same-name-other-chat", TargetName = a.TargetName, Text = "同名但不同会话的消息" }]);
+        store.SaveRequirement(new("other-requirement", "研发预览需求", "其他会话需求", "待确认", b.Id, DateTimeOffset.Now));
+        string onlyA = Path.Combine(root, "current-a-export"); Exporter.Export(store, onlyA, "a");
+        var aRecords = File.ReadLines(Path.Combine(onlyA, "聊天记录.jsonl")).Select(line => JsonSerializer.Deserialize<CaptureRecord>(line)!).ToList();
+        check("当前会话导出按标识隔离同名会话及其他消息", aRecords.Count == 1 && aRecords[0].Id == a.Id && !File.ReadAllText(Path.Combine(onlyA, "聊天记录.csv")).Contains("同名但不同会话的消息") && !File.ReadAllText(Path.Combine(onlyA, "聊天记录.md")).Contains("record-b1"));
+        string onlyB = Path.Combine(root, "current-b-export"); Exporter.Export(store, onlyB, "b");
+        var bRecords = File.ReadLines(Path.Combine(onlyB, "聊天记录.jsonl")).Select(line => JsonSerializer.Deserialize<CaptureRecord>(line)!).ToList();
+        check("当前会话导出包含超过 500 条的全部已采集历史", bRecords.Count > 500 && bRecords.Count == store.Captures(targetId: "b").Count && bRecords.All(c => c.TargetId == "b"));
+        string aRequirements = File.ReadAllText(Path.Combine(onlyA, "需求整理.md")), bRequirements = File.ReadAllText(Path.Combine(onlyB, "需求整理.md"));
+        check("需求导出仅包含当前会话条目并保留来源链接", aRequirements.Contains("#record-a1") && !aRequirements.Contains("研发预览需求") && bRequirements.Contains("#record-b1") && !bRequirements.Contains("#record-a1"));
+        string emptyExport = Path.Combine(root, "empty-chat-export"); Exporter.Export(store, emptyExport, "no-messages");
+        check("空会话导出不会回退到全部聊天和需求", !File.ReadLines(Path.Combine(emptyExport, "聊天记录.jsonl")).Any() && !File.ReadAllText(Path.Combine(emptyExport, "聊天记录.md")).Contains("record-a1") && !File.ReadAllText(Path.Combine(emptyExport, "需求整理.md")).Contains("#record-"));
         // Render only synthetic data, without opening or interacting with personal WeChat.
         using var form = new MainForm(store) { Opacity = 0, ShowInTaskbar = false };
         form.Show(); form.PerformLayout();

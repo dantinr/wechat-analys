@@ -19,6 +19,7 @@ public sealed class MainForm : Form
     private readonly NumericUpDown interval = new() { Minimum = 1, Maximum = 60, Value = 30, Width = 55 };
     private readonly Button start;
     private readonly Button once;
+    private readonly Button exportCurrent;
     private bool exporting;
     private bool closing;
     private bool allowClose;
@@ -43,7 +44,7 @@ public sealed class MainForm : Form
         toolbar.Controls.Add(new Label { Text = "间隔（秒）", AutoSize = true, Padding = new Padding(8, 8, 0, 0) }); toolbar.Controls.Add(interval);
         toolbar.Controls.Add(Button("打开数据目录", (_, _) => OpenFolder(store.Root)));
         toolbar.Controls.Add(Button("使用说明", (_, _) => MessageBox.Show(this,
-            "1. 保持 Windows 微信登录。\n2. 点击“添加会话”→“读取会话列表”，勾选群或联系人，可选择首次导入范围。\n3. 点击“开始记录”，默认每 30 秒同步一次。窗口可最小化，无需切换聊天。\n4. 选中原始消息，点击“整理为需求”，编辑需求名称、说明和状态。\n5. “导出全部”生成 Markdown、CSV、JSONL 和需求文档。\n\n通过只读连接本地聊天数据库获取原文，不使用 OCR。完整解密数据库只存在于内存中，只保存选定会话的消息。\n图片、语音和附件仅保留文字说明 / XML，不导出原文件。只读取已经同步到本机的消息。\n关闭程序、电脑休眠或微信退出期间停止同步；重启后点击开始可补采仍在本地的消息。\n微信升级可能需要适配。", "使用说明")));
+            "1. 保持 Windows 微信登录。\n2. 点击“添加会话”→“读取会话列表”，勾选群或联系人，可选择首次导入范围。\n3. 点击“开始记录”，默认每 30 秒同步一次。窗口可最小化，无需切换聊天。\n4. 选中原始消息，点击“整理为需求”，编辑需求名称、说明和状态。\n5. 选择具体会话标签，点击“导出当前聊天记录”，生成该会话的 Markdown、CSV、JSONL 和关联需求文档。\n\n通过只读连接本地聊天数据库获取原文，不使用 OCR。完整解密数据库只存在于内存中，只保存选定会话的消息。\n图片、语音和附件仅保留文字说明 / XML，不导出原文件。只读取已经同步到本机的消息。\n关闭程序、电脑休眠或微信退出期间停止同步；重启后点击开始可补采仍在本地的消息。\n微信升级可能需要适配。", "使用说明")));
         layout.Controls.Add(toolbar, 0, 1);
         targets.Columns.Add("name", "记录会话"); targets.Columns.Add("window", "记录起点"); targets.Columns.Add("status", "采集状态");
         targets.Columns[0].FillWeight = 25; targets.Columns[1].FillWeight = 25; targets.Columns[2].FillWeight = 70;
@@ -57,7 +58,8 @@ public sealed class MainForm : Form
         var recordsLayout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 2 };
         recordsLayout.RowStyles.Add(new(SizeType.Absolute, 44)); recordsLayout.RowStyles.Add(new(SizeType.Percent, 100));
         var recordsToolbar = new FlowLayoutPanel { Dock = DockStyle.Fill, WrapContents = false, Padding = new Padding(0, 3, 0, 0) };
-        recordsToolbar.Controls.Add(Button("导出全部", Export)); recordsLayout.Controls.Add(recordsToolbar, 0, 0);
+        exportCurrent = Button("导出当前聊天记录", Export); exportCurrent.Enabled = false;
+        recordsToolbar.Controls.Add(exportCurrent); recordsLayout.Controls.Add(recordsToolbar, 0, 0);
         recordsTab.Controls.Add(recordsLayout);
         var split = new SplitContainer { Dock = DockStyle.Fill, Size = new(1200, 500), SplitterDistance = 700, Panel1MinSize = 350, Panel2MinSize = 300 };
         split.Panel1.Controls.Add(captures);
@@ -72,7 +74,11 @@ public sealed class MainForm : Form
         interval.ValueChanged += (_, _) => timer.Interval = (int)interval.Value * 1000;
         timer.Interval = (int)interval.Value * 1000; timer.Tick += async (_, _) => await Poll();
         search.TextChanged += (_, _) => captures.Search(search.Text);
-        captures.SelectionChanged += () => { ShowCapture(); UpdateFooter(); };
+        captures.SelectionChanged += () =>
+        {
+            ShowCapture(); UpdateFooter();
+            exportCurrent.Enabled = captures.SelectedConversationId != null && captures.RecentCount > 0 && !exporting && !closing;
+        };
         requirements.CellDoubleClick += EditRequirement;
         recorder.Status += (id, message) =>
         {
@@ -189,12 +195,14 @@ public sealed class MainForm : Form
     }
     private async void Export(object? sender, EventArgs e)
     {
+        string? targetId = captures.SelectedConversationId;
+        if (targetId == null) { MessageBox.Show(this, "请先切换到需要导出的群或联系人标签。", "选择当前会话"); return; }
         await PauseAndDrain();
         using var dialog = new FolderBrowserDialog { Description = "选择导出位置，将在其中新建带时间的导出文件夹", UseDescriptionForTitle = true };
         if (dialog.ShowDialog(this) != DialogResult.OK) return;
         string folder = Path.Combine(dialog.SelectedPath, "微信需求导出_" + DateTimeOffset.UtcNow.ToOffset(TimeSpan.FromHours(8)).ToString("yyyyMMdd_HHmmss") + "_" + Guid.NewGuid().ToString("N")[..6]);
         exporting = true; Enabled = false;
-        try { await Task.Run(() => Exporter.Export(store, folder)); OpenFolder(folder); badge.Text = "导出完成 · 采集已暂停"; }
+        try { await Task.Run(() => Exporter.Export(store, folder, targetId)); OpenFolder(folder); badge.Text = "当前会话导出完成 · 采集已暂停"; }
         catch (Exception ex) { MessageBox.Show(this, "导出未完成：" + ex.Message, "导出失败"); }
         finally { exporting = false; Enabled = true; }
     }
