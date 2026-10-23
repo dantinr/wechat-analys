@@ -16,7 +16,7 @@ public static class Exporter
         using (var csv = new StreamWriter(Path.Combine(folder, "聊天记录.csv"), false, utf8))
         using (var markdown = new StreamWriter(Path.Combine(folder, "聊天记录.md"), false, utf8))
         {
-            csv.WriteLine("记录ID,会话,发送人,发送时间,消息类型,消息原文,数据库原始正文,消息编号,本地编号,来源数据库,记录时间,旧版截图,说明");
+            csv.WriteLine("记录ID,会话,发送人,群昵称,发送时间,消息类型,消息原文,数据库原始正文,消息编号,本地编号,来源数据库,记录时间,旧版截图,说明");
             markdown.WriteLine("# 微信聊天记录\n\n消息直接读取自本地数据库，时间为消息发送时间（UTC+08:00）。只包括选定会话及导入范围内、已同步到这台电脑的消息。图片、语音和附件只保留数据库中的文字说明或 XML。旧版 OCR 记录会单独注明。\n");
             foreach (var capture in captures)
             {
@@ -35,9 +35,10 @@ public static class Exporter
                 }
                 var message = capture.Message;
                 json.WriteLine(JsonSerializer.Serialize(capture with { ImagePath = imagePath }, new JsonSerializerOptions { Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping }));
-                csv.WriteLine(string.Join(',', new[] { capture.Id, capture.TargetName, message?.Sender ?? "旧版 OCR", message?.SentAt.ToString("O") ?? "", message == null ? "旧版 OCR" : RawChatSource.TypeName(message.RawType), capture.Text, message?.RawContent ?? capture.Text, message?.ServerId.ToString() ?? "", message?.LocalId.ToString() ?? "", message?.SourceDatabase ?? "", capture.ObservedAt.ToString("O"), imagePath, capture.Note }.Select(Csv)));
+                csv.WriteLine(string.Join(',', new[] { capture.Id, capture.TargetName, message?.Sender ?? "旧版 OCR", message?.GroupNickname ?? "", message?.SentAt.ToString("O") ?? "", message == null ? "旧版 OCR" : RawChatSource.TypeName(message.RawType), capture.Text, message?.RawContent ?? capture.Text, message?.ServerId.ToString() ?? "", message?.LocalId.ToString() ?? "", message?.SourceDatabase ?? "", capture.ObservedAt.ToString("O"), imagePath, capture.Note }.Select(Csv)));
                 markdown.WriteLine($"<a id=\"record-{capture.Id}\"></a>\n\n## {Md(capture.TargetName)} · {(message?.SentAt ?? capture.ObservedAt):yyyy-MM-dd HH:mm:ss zzz}\n\n发送人：{Md(message?.Sender ?? "旧版 OCR：发送人与时间需核对截图")}\n\n记录 ID：`{capture.Id}`\n\n{Quote(capture.Text)}\n\n{Md(capture.Note)}\n");
                 if (message != null) markdown.WriteLine($"消息编号：{message.ServerId}；本地编号：{message.LocalId}；来源：{Md(message.SourceDatabase)}\n");
+                if (message?.GroupNickname is { Length: > 0 } nickname) markdown.WriteLine($"群昵称：{Md(nickname)}\n");
                 if (imagePath.Length > 0) markdown.WriteLine($"[查看旧版截图]({imagePath})\n");
             }
         }
@@ -58,6 +59,6 @@ public static class Exporter
         if (trimmed.Length > 0 && ("=+-@".Contains(trimmed[0]) || text[0] is '\t' or '\r' or '\n')) text = "'" + text;
         return "\"" + text.Replace("\"", "\"\"") + "\"";
     }
-    private static string Md(string text) => System.Net.WebUtility.HtmlEncode(text).Replace("\\", "\\\\").Replace("[", "\\[").Replace("]", "\\]").Replace("*", "\\*").Replace("_", "\\_").Replace("`", "\\`").Replace("#", "\\#");
+    private static string Md(string text) => System.Net.WebUtility.HtmlEncode(text.Replace("\\", "\\\\").Replace("[", "\\[").Replace("]", "\\]").Replace("*", "\\*").Replace("_", "\\_").Replace("`", "\\`").Replace("#", "\\#"));
     private static string Quote(string text) => string.Join('\n', Md(text).Replace("\r", "").Split('\n').Select(line => "> " + line));
 }

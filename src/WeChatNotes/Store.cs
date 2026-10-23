@@ -28,8 +28,26 @@ public sealed class Store : IDisposable
     }
 
     public List<Target> Targets() => Read<Target>("SELECT json FROM targets ORDER BY rowid");
-    public List<CaptureRecord> Captures(int? limit = null) => Read<CaptureRecord>(limit.HasValue
-        ? "SELECT json FROM (SELECT rowid,json FROM captures ORDER BY rowid DESC LIMIT $limit) ORDER BY rowid" : "SELECT json FROM captures ORDER BY rowid", limit);
+    public List<CaptureRecord> Captures(int? limit = null, string? targetId = null)
+    {
+        string filter = targetId == null ? "" : " WHERE target_id=$target";
+        return Read<CaptureRecord>(limit.HasValue
+            ? $"SELECT json FROM (SELECT rowid,json FROM captures{filter} ORDER BY rowid DESC LIMIT $limit) ORDER BY rowid"
+            : $"SELECT json FROM captures{filter} ORDER BY rowid", limit, targetId);
+    }
+    public List<(string Id, string Name)> CaptureConversations()
+    {
+        using var command = db.CreateCommand();
+        command.CommandText = """
+            SELECT c.target_id,json_extract(c.json,'$.TargetName') FROM captures c
+            JOIN (SELECT target_id,MAX(rowid) latest FROM captures GROUP BY target_id) last ON c.rowid=last.latest
+            ORDER BY c.rowid
+            """;
+        using var reader = command.ExecuteReader();
+        var result = new List<(string, string)>();
+        while (reader.Read()) result.Add((reader.GetString(0), reader.GetString(1)));
+        return result;
+    }
     public List<Requirement> Requirements() => Read<Requirement>("SELECT json FROM requirements ORDER BY rowid");
     public void SaveTarget(Target target) => Execute("INSERT OR REPLACE INTO targets(id,json) VALUES($id,$json)", target.Id, target);
     public void RemoveTarget(string id) => Execute("DELETE FROM targets WHERE id=$id", id, null);
@@ -91,11 +109,12 @@ public sealed class Store : IDisposable
         return result;
     }
 
-    private List<T> Read<T>(string sql, int? limit = null)
+    private List<T> Read<T>(string sql, int? limit = null, string? targetId = null)
     {
         using var command = db.CreateCommand();
         command.CommandText = sql;
         if (limit.HasValue) command.Parameters.AddWithValue("$limit", limit.Value);
+        if (targetId != null) command.Parameters.AddWithValue("$target", targetId);
         using var reader = command.ExecuteReader();
         var result = new List<T>();
         while (reader.Read()) result.Add(JsonSerializer.Deserialize<T>(reader.GetString(0))!);

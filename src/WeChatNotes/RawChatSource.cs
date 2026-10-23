@@ -18,6 +18,7 @@ internal sealed class RawChatSource(string root) : IDisposable
     public string Root { get; } = Path.GetFullPath(root);
     private Dictionary<string, byte[]> keys = new(StringComparer.OrdinalIgnoreCase);
     private Dictionary<string, string> names = new(StringComparer.Ordinal);
+    private Dictionary<(string Room, string Sender), string> groupNicknames = [];
     internal static string[] Accounts()
     {
         string path = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "xwechat_files");
@@ -52,7 +53,7 @@ internal sealed class RawChatSource(string root) : IDisposable
         }
         return result;
     }
-    private void LoadNames(CancellationToken token)
+    private void LoadNames(CancellationToken token, IEnumerable<string>? rooms = null)
     {
         using var db = Open(Path.Combine(Root, "contact", "contact.db"), token);
         var next = new Dictionary<string, string>(StringComparer.Ordinal);
@@ -67,12 +68,13 @@ internal sealed class RawChatSource(string root) : IDisposable
             }
         }
         names = next;
+        groupNicknames = GroupNicknames.Load(db, rooms ?? []);
     }
     private string NameOf(string id) => names.GetValueOrDefault(id, id);
     internal List<CaptureRecord> Read(IReadOnlyList<Target> targets, CancellationToken token)
     {
         Connect(null, token);
-        if (names.Count == 0) LoadNames(token);
+        LoadNames(token, targets.Select(t => t.ConversationId!).Where(id => id.EndsWith("@chatroom", StringComparison.Ordinal)));
         var result = new List<CaptureRecord>();
         foreach (string path in MessageFiles())
         {
@@ -115,7 +117,8 @@ internal sealed class RawChatSource(string root) : IDisposable
                     }
                     string id = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes($"{target.Id}|{Path.GetFileName(path)}|{local}"))).ToLowerInvariant();
                     string kind = TypeName(type);
-                    var message = new RawMessageInfo(Path.GetFileName(path), local, server, sender, sender.Length > 0 ? NameOf(sender) : "未知发送人 / 系统", time, type, raw);
+                    var message = new RawMessageInfo(Path.GetFileName(path), local, server, sender, sender.Length > 0 ? NameOf(sender) : "未知发送人 / 系统", time, type, raw,
+                        groupNicknames.GetValueOrDefault((target.ConversationId!, sender)));
                     string text = content.Length > 0 ? content : $"[{kind}，无文字正文]";
                     result.Add(new(id, target.Id, target.Name, DateTimeOffset.Now.ToOffset(TimeSpan.FromHours(8)), text, text, "",
                         $"直接读取本地消息 · {kind}。图片、语音和附件仅保留数据库中的说明或 XML，不提取文件内容。", message));
@@ -147,7 +150,7 @@ internal sealed class RawChatSource(string root) : IDisposable
     public void Dispose()
     {
         foreach (var key in keys.Values) CryptographicOperations.ZeroMemory(key);
-        keys.Clear(); names.Clear();
+        keys.Clear(); names.Clear(); groupNicknames.Clear();
     }
 }
 

@@ -9,9 +9,9 @@ public sealed class MainForm : Form
     private readonly System.Windows.Forms.Timer timer = new();
     private CancellationTokenSource cancellation = new();
     private readonly DataGridView targets = Grid();
-    private readonly DataGridView captures = Grid();
+    private readonly ConversationRecords captures;
     private readonly DataGridView requirements = Grid();
-    private readonly TextBox search = new() { Width = 260, PlaceholderText = "在最近 500 条消息中搜索" };
+    private readonly TextBox search = new() { Width = 285, PlaceholderText = "在当前标签最近 500 条消息中搜索" };
     private readonly TextBox detail = new() { Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Vertical, Dock = DockStyle.Fill, BorderStyle = BorderStyle.None };
     private readonly PictureBox picture = new() { Dock = DockStyle.Fill, SizeMode = PictureBoxSizeMode.Zoom, BackColor = Color.FromArgb(238, 241, 245) };
     private readonly Label badge = new() { AutoSize = true, ForeColor = Color.FromArgb(85, 99, 113), Text = "已暂停", Padding = new Padding(10) };
@@ -19,14 +19,13 @@ public sealed class MainForm : Form
     private readonly NumericUpDown interval = new() { Minimum = 1, Maximum = 60, Value = 30, Width = 55 };
     private readonly Button start;
     private readonly Button once;
-    private List<CaptureRecord> recent = [];
     private bool exporting;
     private bool closing;
     private bool allowClose;
 
     public MainForm(Store store)
     {
-        this.store = store; recorder = new(store);
+        this.store = store; recorder = new(store); captures = new(store);
         Text = $"微信需求记录 v{Application.ProductVersion}"; Width = 1380; Height = 940; MinimumSize = new(1060, 760);
         StartPosition = FormStartPosition.CenterScreen; Font = new("Microsoft YaHei UI", 10);
         BackColor = Color.FromArgb(246, 248, 250);
@@ -56,8 +55,6 @@ public sealed class MainForm : Form
         var tabs = new TabControl { Dock = DockStyle.Fill };
         var recordsTab = new TabPage("采集记录"); var requirementsTab = new TabPage("需求清单（双击编辑）");
         var split = new SplitContainer { Dock = DockStyle.Fill, Size = new(1200, 500), SplitterDistance = 700, Panel1MinSize = 350, Panel2MinSize = 300 };
-        captures.Columns.Add("time", "发送时间"); captures.Columns.Add("name", "会话"); captures.Columns.Add("text", "消息原文");
-        captures.Columns[0].FillWeight = 28; captures.Columns[1].FillWeight = 25; captures.Columns[2].FillWeight = 65;
         split.Panel1.Controls.Add(captures);
         var previewTabs = new TabControl { Dock = DockStyle.Fill };
         var textTab = new TabPage("消息原文 / 来源"); textTab.Padding = new Padding(12); textTab.Controls.Add(detail);
@@ -69,8 +66,8 @@ public sealed class MainForm : Form
         layout.Controls.Add(footer, 0, 5); Controls.Add(layout);
         interval.ValueChanged += (_, _) => timer.Interval = (int)interval.Value * 1000;
         timer.Interval = (int)interval.Value * 1000; timer.Tick += async (_, _) => await Poll();
-        search.TextChanged += (_, _) => PopulateCaptures();
-        captures.SelectionChanged += (_, _) => ShowCapture();
+        search.TextChanged += (_, _) => captures.Search(search.Text);
+        captures.SelectionChanged += () => { ShowCapture(); UpdateFooter(); };
         requirements.CellDoubleClick += EditRequirement;
         recorder.Status += (id, message) =>
         {
@@ -83,7 +80,7 @@ public sealed class MainForm : Form
         RefreshTargets(); RefreshRecords();
     }
 
-    private static DataGridView Grid() => new()
+    internal static DataGridView Grid() => new()
     {
         Dock = DockStyle.Fill, ReadOnly = true, AllowUserToAddRows = false, AllowUserToDeleteRows = false,
         SelectionMode = DataGridViewSelectionMode.FullRowSelect, MultiSelect = false, AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill,
@@ -108,31 +105,19 @@ public sealed class MainForm : Form
     }
     private void RefreshRecords()
     {
-        recent = store.Captures(500); PopulateCaptures();
+        captures.RefreshRecords();
         requirements.Rows.Clear(); foreach (var item in store.Requirements())
         {
             int row = requirements.Rows.Add(item.Title, item.Status, item.Notes.ReplaceLineEndings(" ")); requirements.Rows[row].Tag = item;
         }
-        footer.Text = $"最近 {recent.Count} 条消息 · {requirements.Rows.Count} 条需求 · 本机数据：{store.Root}";
+        UpdateFooter();
     }
-    private void PopulateCaptures()
-    {
-        string? selected = (captures.CurrentRow?.Tag as CaptureRecord)?.Id;
-        captures.Rows.Clear();
-        foreach (var item in recent.AsEnumerable().Reverse().Where(c => string.IsNullOrWhiteSpace(search.Text) || (c.Text + c.TargetName).Contains(search.Text, StringComparison.OrdinalIgnoreCase)))
-        {
-            int index = captures.Rows.Add((item.Message?.SentAt ?? item.ObservedAt).ToString("MM-dd HH:mm:ss"), item.TargetName, item.AddedText.ReplaceLineEndings(" "));
-            captures.Rows[index].Tag = item;
-        }
-        var row = captures.Rows.Cast<DataGridViewRow>().FirstOrDefault(r => (r.Tag as CaptureRecord)?.Id == selected) ?? captures.Rows.Cast<DataGridViewRow>().FirstOrDefault();
-        if (row != null) { captures.CurrentCell = row.Cells[0]; row.Selected = true; }
-        ShowCapture();
-    }
+    private void UpdateFooter() => footer.Text = $"当前标签最近 {captures.RecentCount} 条消息 · 显示 {captures.VisibleCount} 条 · {requirements.Rows.Count} 条需求 · 本机数据：{store.Root}";
     private void ShowCapture()
     {
-        var item = captures.CurrentRow?.Tag as CaptureRecord;
+        var item = captures.SelectedRecord;
         detail.Text = item == null ? "添加会话并开始记录后，这里显示原始消息。\r\n选择一条消息即可查看来源并整理需求。" : item.Message is { } message ?
-            $"{item.TargetName}\r\n发送人：{message.Sender}\r\n发送于 {message.SentAt:yyyy-MM-dd HH:mm:ss zzz}\r\n记录于 {item.ObservedAt:yyyy-MM-dd HH:mm:ss zzz}\r\n消息类型：{RawChatSource.TypeName(message.RawType)}\r\n消息编号：{message.ServerId} / 本地 {message.LocalId}\r\n来源：{message.SourceDatabase}\r\n\r\n【消息原文】\r\n{item.Text}\r\n\r\n{item.Note}".ReplaceLineEndings(Environment.NewLine) :
+            $"{item.TargetName}\r\n发送人：{message.Sender}\r\n群昵称：{message.GroupNickname ?? "—（未设置或本机未同步）"}\r\n发送于 {message.SentAt:yyyy-MM-dd HH:mm:ss zzz}\r\n记录于 {item.ObservedAt:yyyy-MM-dd HH:mm:ss zzz}\r\n消息类型：{RawChatSource.TypeName(message.RawType)}\r\n消息编号：{message.ServerId} / 本地 {message.LocalId}\r\n来源：{message.SourceDatabase}\r\n\r\n【消息原文】\r\n{item.Text}\r\n\r\n{item.Note}".ReplaceLineEndings(Environment.NewLine) :
             $"{item.TargetName}\r\n旧版 OCR 记录，采集于 {item.ObservedAt:yyyy-MM-dd HH:mm:ss zzz}\r\n\r\n{item.Note}\r\n\r\n{item.Text}".ReplaceLineEndings(Environment.NewLine);
         picture.Image?.Dispose(); picture.Image = null;
         if (item != null && !string.IsNullOrEmpty(item.ImagePath) && File.Exists(store.ImageFile(item.ImagePath)))
@@ -150,7 +135,7 @@ public sealed class MainForm : Form
             {
                 var existing = store.Targets().Select(t => t.Id).ToHashSet();
                 foreach (var target in dialog.Results.Where(t => !existing.Contains(t.Id))) store.SaveTarget(target);
-                RefreshTargets();
+                RefreshTargets(); RefreshRecords();
             }
         }
         catch (Exception ex) { MessageBox.Show(this, ex.Message, "无法添加会话"); }
@@ -158,7 +143,7 @@ public sealed class MainForm : Form
     private async void RemoveTarget(object? sender, EventArgs e)
     {
         if (targets.CurrentRow?.Tag is not string id) return;
-        await PauseAndDrain(); store.RemoveTarget(id); RefreshTargets();
+        await PauseAndDrain(); store.RemoveTarget(id); RefreshTargets(); RefreshRecords();
     }
     private async void Toggle(object? sender, EventArgs e)
     {
@@ -185,7 +170,7 @@ public sealed class MainForm : Form
     }
     private void MakeRequirement(object? sender, EventArgs e)
     {
-        if (captures.CurrentRow?.Tag is not CaptureRecord source) return;
+        if (captures.SelectedRecord is not CaptureRecord source) return;
         using var dialog = new RequirementDialog(source);
         if (dialog.ShowDialog(this) == DialogResult.OK && dialog.Result is { } item) { store.SaveRequirement(item); RefreshRecords(); }
     }

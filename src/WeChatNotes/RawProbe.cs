@@ -27,6 +27,28 @@ internal static class RawProbe
                 command.CommandText = "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name";
                 var schemas = new List<string>(); using (var reader = command.ExecuteReader()) while (reader.Read()) schemas.Add(reader.GetString(0));
                 log.Add(new { database = Path.GetFileName(file), check, tables = schemas.Count, schema = schemas.Where(n => !n.StartsWith("Msg_")).ToArray() });
+                if (Path.GetFileName(file) == "contact.db")
+                    foreach (string table in new[] { "chat_room", "chat_room_info_detail", "chatroom_member" }.Where(schemas.Contains))
+                    {
+                        command.CommandText = $"PRAGMA table_info(\"{table}\")";
+                        var columns = new List<object>();
+                        using (var reader = command.ExecuteReader())
+                            while (reader.Read()) columns.Add(new { name = reader.GetString(1), type = reader.GetString(2) });
+                        log.Add(new { table, columns });
+                    }
+                if (Path.GetFileName(file) == "contact.db")
+                {
+                    command.CommandText = "SELECT ext_buffer FROM chat_room WHERE length(ext_buffer)>0";
+                    int parsed = 0, failed = 0, nicknames = 0;
+                    using var reader = command.ExecuteReader();
+                    while (reader.Read())
+                    {
+                        if (reader.GetValue(0) is byte[] blob && GroupNicknames.TryParse(blob, out var members))
+                        { parsed++; nicknames += members.Count; }
+                        else failed++;
+                    }
+                    log.Add(new { roomBuffersParsed = parsed, roomBuffersUnsupported = failed, groupNicknames = nicknames });
+                }
                 if (Path.GetFileName(file) == "session.db")
                 {
                     command.CommandText = "SELECT COUNT(*) FROM SessionTable";
@@ -41,7 +63,7 @@ internal static class RawProbe
                 {
                     var target = new Target("probe-selected-group", session.DisplayName, "", 0,0,0,0,0,0,storage,session.Username,0);
                     var records = source.Read([target], CancellationToken.None);
-                    log.Add(new { selectedConversationFound = true, messagesRead = records.Count, textMessages = records.Count(r => (r.Message!.RawType & 0xffffffff) == 1), originalTextPresent = records.Any(r => r.Message!.RawContent.Length > 0), senderResolved = records.Count(r => r.Message!.SenderId.Length > 0) });
+                    log.Add(new { selectedConversationFound = true, messagesRead = records.Count, textMessages = records.Count(r => (r.Message!.RawType & 0xffffffff) == 1), originalTextPresent = records.Any(r => r.Message!.RawContent.Length > 0), senderResolved = records.Count(r => r.Message!.SenderId.Length > 0), groupNicknamesResolved = records.Count(r => !string.IsNullOrEmpty(r.Message!.GroupNickname)) });
                 }
                 else if (conversation != null) log.Add(new { selectedConversationFound = false });
             }
