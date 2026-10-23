@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [string]$OutputDirectory = (Join-Path $PSScriptRoot 'dist\WeChatNotes'),
+    [string]$OutputDirectory = (Join-Path $PSScriptRoot 'dist\Ripper'),
     [switch]$SkipShortcut,
     [switch]$Standalone
 )
@@ -8,7 +8,7 @@ param(
 $ErrorActionPreference = 'Stop'
 if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) { throw '请在 Windows 上构建。' }
 if ($Standalone -and !$PSBoundParameters.ContainsKey('OutputDirectory')) {
-    $OutputDirectory = Join-Path $PSScriptRoot 'dist\WeChatNotes-exe'
+    $OutputDirectory = Join-Path $PSScriptRoot 'dist\Ripper-exe'
 }
 $wechatNotesProject = Join-Path $PSScriptRoot 'src\WeChatNotes\WeChatNotes.csproj'
 $wechatNotesOutput = [IO.Path]::GetFullPath($OutputDirectory)
@@ -39,19 +39,19 @@ if ($Standalone) {
 }
 if (!$SkipShortcut) {
     $wechatNotesShell = New-Object -ComObject WScript.Shell
-    $wechatNotesShortcut = $wechatNotesShell.CreateShortcut((Join-Path $wechatNotesOutput '启动微信需求记录.lnk'))
-    if ($Standalone) { $wechatNotesShortcut.TargetPath = Join-Path $wechatNotesOutput 'WeChatNotes.exe' }
+    $wechatNotesShortcut = $wechatNotesShell.CreateShortcut((Join-Path $wechatNotesOutput '启动Ripper.lnk'))
+    if ($Standalone) { $wechatNotesShortcut.TargetPath = Join-Path $wechatNotesOutput 'Ripper.exe' }
     else {
         $wechatNotesShortcut.TargetPath = (Get-Command dotnet).Source
-        $wechatNotesShortcut.Arguments = '"' + (Join-Path $wechatNotesOutput 'WeChatNotes.dll') + '"'
+        $wechatNotesShortcut.Arguments = '"' + (Join-Path $wechatNotesOutput 'Ripper.dll') + '"'
     }
     $wechatNotesShortcut.WorkingDirectory = $wechatNotesOutput
     $wechatNotesShortcut.WindowStyle = 1
-    $wechatNotesShortcut.Description = '微信需求记录 - 本地采集与需求整理'
+    $wechatNotesShortcut.Description = 'Ripper - 本地微信聊天采集与导出'
     $wechatNotesShortcut.Save()
 }
-if ($Standalone) { $wechatNotesLauncher = "@echo off`r`n`"%~dp0WeChatNotes.exe`"`r`nif errorlevel 1 pause`r`n" }
-else { $wechatNotesLauncher = "@echo off`r`ndotnet `"%~dp0WeChatNotes.dll`"`r`nif errorlevel 1 pause`r`n" }
+if ($Standalone) { $wechatNotesLauncher = "@echo off`r`n`"%~dp0Ripper.exe`"`r`nif errorlevel 1 pause`r`n" }
+else { $wechatNotesLauncher = "@echo off`r`ndotnet `"%~dp0Ripper.dll`"`r`nif errorlevel 1 pause`r`n" }
 [System.IO.File]::WriteAllText((Join-Path $wechatNotesOutput '启动.cmd'), $wechatNotesLauncher, [System.Text.Encoding]::ASCII)
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'README.md') -Destination (Join-Path $wechatNotesOutput '使用说明.md') -Force
 foreach ($wechatNotesNotice in @('LICENSE', 'THIRD_PARTY_NOTICES.md', 'VERSION')) {

@@ -22,7 +22,7 @@ internal static class Program
             return;
         }
         using var mutex = new Mutex(true, "Local\\WeChatNotes.LocalRecorder", out bool first);
-        if (!first) { MessageBox.Show("程序已经在运行，请查看任务栏。", "微信需求记录"); return; }
+        if (!first) { MessageBox.Show("程序已经在运行，请查看任务栏。", "Ripper"); return; }
         string data = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "WeChatNotes");
         try
         {
@@ -31,7 +31,7 @@ internal static class Program
         }
         catch (Exception ex)
         {
-            MessageBox.Show("程序无法启动：" + ex.Message, "微信需求记录", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            MessageBox.Show("程序无法启动：" + ex.Message, "Ripper", MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
     }
 }

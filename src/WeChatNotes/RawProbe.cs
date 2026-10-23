@@ -14,8 +14,7 @@ internal static class RawProbe
         Dictionary<string, byte[]> keys = [];
         try
         {
-            string root = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "xwechat_files");
-            string storage = Directory.GetDirectories(root).Select(d => Path.Combine(d, "db_storage")).First(Directory.Exists);
+            string storage = RawChatSource.Accounts().First();
             string[] files = [Path.Combine(storage, "session", "session.db"), Path.Combine(storage, "contact", "contact.db"), .. Directory.GetFiles(Path.Combine(storage, "message"), "message_*.db").Where(p => System.Text.RegularExpressions.Regex.IsMatch(Path.GetFileName(p), @"^message_\d+\.db$"))];
             keys = RawKeys.Find(files, s => { log.Add(new { status = s }); File.WriteAllText(report, JsonSerializer.Serialize(log)); }, CancellationToken.None);
             foreach (var file in files)
@@ -66,6 +65,15 @@ internal static class RawProbe
                     log.Add(new { selectedConversationFound = true, messagesRead = records.Count, textMessages = records.Count(r => (r.Message!.RawType & 0xffffffff) == 1), originalTextPresent = records.Any(r => r.Message!.RawContent.Length > 0), senderResolved = records.Count(r => r.Message!.SenderId.Length > 0), groupNicknamesResolved = records.Count(r => !string.IsNullOrEmpty(r.Message!.GroupNickname)) });
                 }
                 else if (conversation != null) log.Add(new { selectedConversationFound = false });
+                if (conversation == null)
+                {
+                    var targets = BoundTargets(storage);
+                    if (targets.Count > 0)
+                    {
+                        var records = source.Read(targets, CancellationToken.None);
+                        log.Add(new { boundConversations = targets.Count, messagesRead = records.Count, originalTextPresent = records.Any(r => r.Message!.RawContent.Length > 0) });
+                    }
+                }
             }
             log.Add(new { success = true });
         }
@@ -80,5 +88,20 @@ internal static class RawProbe
             foreach (var key in keys.Values) CryptographicOperations.ZeroMemory(key);
             File.WriteAllText(report, JsonSerializer.Serialize(log, new JsonSerializerOptions { WriteIndented = true }));
         }
+    }
+
+    private static List<Target> BoundTargets(string storage)
+    {
+        string file = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "WeChatNotes", "records.sqlite3");
+        if (!File.Exists(file)) return [];
+        using var db = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = file, Mode = SqliteOpenMode.ReadOnly, Pooling = false }.ToString());
+        db.Open(); using var command = db.CreateCommand(); command.CommandText = "SELECT json FROM targets";
+        using var reader = command.ExecuteReader(); var targets = new List<Target>();
+        while (reader.Read())
+        {
+            var target = JsonSerializer.Deserialize<Target>(reader.GetString(0));
+            if (target?.SourceRoot != null && target.ConversationId != null && Path.GetFullPath(target.SourceRoot).Equals(storage, StringComparison.OrdinalIgnoreCase)) targets.Add(target);
+        }
+        return targets;
     }
 }

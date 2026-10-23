@@ -8,7 +8,7 @@ $ErrorActionPreference = 'Stop'
 if (!$Application) {
     $wechatNotesTestOutput = Join-Path $PSScriptRoot 'artifacts\test-build'
     & (Join-Path $PSScriptRoot 'build.ps1') -OutputDirectory $wechatNotesTestOutput -SkipShortcut
-    $Application = Join-Path $wechatNotesTestOutput 'WeChatNotes.dll'
+    $Application = Join-Path $wechatNotesTestOutput 'Ripper.dll'
 }
 $wechatNotesReportPath = [IO.Path]::GetFullPath($Report)
 New-Item -ItemType Directory -Path (Split-Path $wechatNotesReportPath) -Force | Out-Null

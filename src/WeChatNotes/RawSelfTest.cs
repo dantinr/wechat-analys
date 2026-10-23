@@ -23,11 +23,17 @@ internal static class RawSelfTest
         {
             byte[] key = RandomNumberGenerator.GetBytes(32), salt = RandomNumberGenerator.GetBytes(16);
             byte[] mac = CipherPages.MacKey(key, salt);
-            byte[] MakePage(byte value, uint number)
+            byte[] MakePage(byte value, uint number, uint databasePages = 2, bool validSize = true)
             {
                 byte[] result = new byte[4096], plain = Enumerable.Repeat(value, 4016).ToArray();
                 int start = number == 1 ? 16 : 0;
-                if (number == 1) salt.CopyTo(result, 0);
+                if (number == 1)
+                {
+                    salt.CopyTo(result, 0);
+                    BinaryPrimitives.WriteUInt32BigEndian(plain.AsSpan(28), databasePages);
+                    BinaryPrimitives.WriteUInt32BigEndian(plain.AsSpan(24), 1);
+                    BinaryPrimitives.WriteUInt32BigEndian(plain.AsSpan(92), validSize ? 1u : 0u);
+                }
                 byte[] iv = RandomNumberGenerator.GetBytes(16); iv.CopyTo(result, 4016);
                 using var aes = Aes.Create(); aes.Key = key;
                 aes.EncryptCbc(plain.AsSpan(start), iv, result.AsSpan(start), PaddingMode.None);
@@ -79,6 +85,31 @@ internal static class RawSelfTest
             byte[] untrusted = MakePage(50, 2); untrusted[100] ^= 1;
             rejected = false; try { CipherPages.Decode(main, Wal((2, 2, untrusted)), key, CancellationToken.None); } catch (CryptographicException) { rejected = true; }
             Check("WAL 页也进行密码校验", rejected);
+            bool Rejects(Action action)
+            {
+                try { action(); return false; }
+                catch (Exception ex) when (ex is IOException or CryptographicException) { return true; }
+            }
+            byte[] padded = [..main, ..new byte[4096 * 4]];
+            Check("预分配零页按有效数据库长度排除", CipherPages.Decode(padded, [], key, CancellationToken.None).SequenceEqual(decoded));
+            Check("有效长度之外的旧页不参与快照", CipherPages.Decode([..main, ..damaged], [], key, CancellationToken.None).SequenceEqual(decoded));
+            Check("有效范围内的空白页仍被拒绝", Rejects(() => CipherPages.Decode([..first, ..new byte[4096]], [], key, CancellationToken.None)));
+            byte[] legacy = MakePage(10, 1, 1, validSize: false);
+            Check("页头版本计数不匹配时回退物理长度", CipherPages.Decode([..legacy, ..second], [], key, CancellationToken.None).Length == 8192 && Rejects(() => CipherPages.Decode([..legacy, ..new byte[4096]], [], key, CancellationToken.None)));
+            Check("页头长度为零时回退物理长度", CipherPages.Decode([..MakePage(10, 1, 0), ..second], [], key, CancellationToken.None).Length == 8192);
+            byte[] grown = CipherPages.Decode(padded, Wal((3, 3, MakePage(50, 3))), key, CancellationToken.None);
+            Check("WAL 已提交扩容覆盖预分配页", grown.Length == 12288 && grown[8192] == 50);
+            Check("WAL 未提交扩容不改变有效长度", CipherPages.Decode(padded, Wal((3, 0, MakePage(50, 3))), key, CancellationToken.None).SequenceEqual(decoded));
+            Check("WAL 已提交截断不读取已移除坏页", CipherPages.Decode(damaged, Wal((1, 1, MakePage(10, 1, 1))), key, CancellationToken.None).Length == 4096);
+            Check("WAL 最新已提交页替代主库旧页", CipherPages.Decode(damaged, Wal((2, 2, committed)), key, CancellationToken.None)[4096] == 30 && CipherPages.Decode(main, Wal((2, 2, untrusted), (2, 2, committed)), key, CancellationToken.None)[4096] == 30);
+            Check("WAL 缺页扩容与超限长度被拒绝", Rejects(() => CipherPages.Decode(main, Wal((4, 4, MakePage(50, 4))), key, CancellationToken.None)) && Rejects(() => CipherPages.Decode(main, Wal((2, uint.MaxValue, second)), key, CancellationToken.None)));
+            Check("页头声明缺失页时不生成不完整快照", Rejects(() => CipherPages.Decode([..MakePage(10, 1, 3), ..second], [], key, CancellationToken.None)));
+            string badSnapshot = Path.Combine(root, "bad-page-fixture.db");
+            File.WriteAllBytes(badSnapshot, damaged);
+            bool preciseFailure = false;
+            try { CipherPages.Snapshot(badSnapshot, key, CancellationToken.None); }
+            catch (IOException ex) { preciseFailure = ex.Message.Contains("bad-page-fixture.db") && ex.Message.Contains("3 次") && ex.Message.Contains("第 2 页"); }
+            Check("快照重试用尽后报告库名页号与最终失败", preciseFailure);
             string original = "  原始文字 &amp; <需求>\n第二行🙂\n";
             Check("原文空格换行表情不被转换", RawChatSource.DecodeContent(original, DBNull.Value) == original);
             using (var compressor = new Compressor(3))
@@ -100,22 +131,39 @@ internal static class RawSelfTest
             }
             var info = new RawMessageInfo("message_0.db", 1, 0, "test-sender", "测试发送人", DateTimeOffset.Now, 1, original);
             var record = new CaptureRecord("raw-test-1", "selected", "合成需求群", DateTimeOffset.Now, original, original, "", "合成测试", info);
+            string legacyPath = Path.Combine(root, "store", "records.sqlite3");
+            Directory.CreateDirectory(Path.GetDirectoryName(legacyPath)!);
+            const string legacyRequirement = """{"Id":"legacy-requirement","Title":"历史合成需求","Notes":"保留原数据","Status":"待确认","CaptureId":"raw-test-1","CreatedAt":"2026-10-23T09:00:00+08:00"}""";
+            using (var legacyStoreDb = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = legacyPath }.ToString()))
+            {
+                legacyStoreDb.Open(); using var command = legacyStoreDb.CreateCommand();
+                command.CommandText = "CREATE TABLE requirements(id TEXT PRIMARY KEY,json TEXT NOT NULL); INSERT INTO requirements VALUES('legacy-requirement',$json)";
+                command.Parameters.AddWithValue("$json", legacyRequirement); command.ExecuteNonQuery();
+            }
             using (var store = new Store(Path.Combine(root, "store")))
             {
                 Check("首次采集逐条保存", store.AddMessages([record]) == 1);
                 Check("重复轮询不重复保存", store.AddMessages([record with { ObservedAt = DateTimeOffset.Now.AddSeconds(10) }]) == 0 && store.Captures().Count == 1);
                 Check("同文不同消息均保留", store.AddMessages([record with { Id = "raw-test-2", Message = info with { LocalId = 2 } }]) == 1 && store.Captures().Count == 2);
                 Check("发送完成后更新同条消息编号", store.AddMessages([record with { Message = info with { ServerId = 500 } }]) == 1 && store.Captures().Count == 2 && store.Captures()[0].Message!.ServerId == 500);
-                store.SaveRequirement(new("test-requirement", "需求标题", original, "待确认", record.Id, DateTimeOffset.Now));
                 string export = Path.Combine(root, "export"); Exporter.Export(store, export);
                 var records = File.ReadAllLines(Path.Combine(export, "聊天记录.jsonl")).Select(line => JsonSerializer.Deserialize<CaptureRecord>(line)!).ToList();
                 Check("JSONL 保留原文和来源元数据", records[0].Text == original && records[0].Message!.RawContent == original && records[0].Message!.ServerId == 500);
-                Check("Markdown 来源锚点可追溯", File.ReadAllText(Path.Combine(export, "聊天记录.md")).Contains("id=\"record-raw-test-1\"") && File.ReadAllText(Path.Combine(export, "需求整理.md")).Contains("#record-raw-test-1"));
+                Check("Markdown 保留消息来源锚点", File.ReadAllText(Path.Combine(export, "聊天记录.md")).Contains("id=\"record-raw-test-1\""));
                 Check("CSV 公式按文本导出", Exporter.Csv(" =1+1").StartsWith("\"'"));
             }
             using (var reopened = new Store(Path.Combine(root, "store")))
-                Check("重启后仍能去重和恢复需求", reopened.Captures().Count == 2 && reopened.Requirements().Count == 1 && reopened.AddMessages([record with { Message = info with { ServerId = 500 } }]) == 0);
+            {
+                using var reopenedLegacyDb = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = legacyPath }.ToString());
+                reopenedLegacyDb.Open(); using var command = reopenedLegacyDb.CreateCommand();
+                command.CommandText = "SELECT json FROM requirements WHERE id='legacy-requirement'";
+                Check("重启后去重正常且旧版需求数据原样保留", reopened.Captures().Count == 2 && (string?)command.ExecuteScalar() == legacyRequirement && reopened.AddMessages([record with { Message = info with { ServerId = 500 } }]) == 0);
+            }
+            DirectorySelfTest.Run(root, Check);
             ConversationSelfTest.Run(root, report, Check);
+            PaginationSelfTest.Run(root, report, Check);
+            ConversationOptionsSelfTest.Run(root, Check);
+            ExportProgressSelfTest.Run(root, report, Check);
             AttachmentSelfTest.Run(root, Check);
             VoiceSelfTest.Run(root, Check);
             SilkSelfTest.Run(root, Check);

@@ -37,6 +37,13 @@ internal static class AttachmentSelfTest
         check("普通文字保留原始空白换行与中文表情", MessageContent.Read(first).Text == plain);
         var parsed = MessageContent.Read(file1);
         check("文件 XML 解析原始文件名大小与校验值", parsed.File?.Name == name && parsed.File.Length == original.Length && parsed.File.Md5 == Convert.ToHexString(MD5.HashData(original)).ToLowerInvariant());
+        string locateOutput = Path.Combine(root, "locate-must-not-write");
+        var locator = new AttachmentExporter(store, locateOutput);
+        bool missingBeforeDownload = locator.Locate(missing, MessageContent.Read(missing).File!).FullPath == null;
+        check("定位文件按校验值匹配原文件和下载重命名文件且不复制内容",
+            locator.Locate(file1, parsed.File!).FullPath == Path.Combine(local, name) &&
+            locator.Locate(file2, MessageContent.Read(file2).File!).FullPath == Path.Combine(local, "下载重命名.txt") &&
+            !Directory.Exists(locateOutput) && File.ReadAllBytes(Path.Combine(local, name)).SequenceEqual(original));
         string folder = Path.Combine(root, "dialogue-export"); Exporter.Export(store, folder, "files");
         string dialogue = File.ReadAllText(Path.Combine(folder, "对话内容.md"));
         string unescaped = System.Net.WebUtility.HtmlDecode(dialogue).Replace("\\*", "*");
@@ -57,14 +64,21 @@ internal static class AttachmentSelfTest
         check("附件只在微信文件目录内匹配且不读取 XML 指定的任意路径", copier.Copy(outsideRecord, MessageContent.Read(outsideRecord).File!).RelativePath == null);
         var wrong = parsed.File! with { Md5 = new string('0', 32) };
         check("同名文件校验不符时不会误导出", copier.Copy(first, wrong).RelativePath == null);
+        check("定位拒绝校验不符非法文件名无效资料及微信文件目录外文件",
+            locator.Locate(first, wrong).FullPath == null && locator.Locate(first, unsafeFile).FullPath == null &&
+            locator.Locate(first, parsed.File! with { ValidMetadata = false }).FullPath == null &&
+            locator.Locate(outsideRecord, MessageContent.Read(outsideRecord).File!).FullPath == null);
         var noHash = Record("no-hash", "A", Xml(name, original, false), 1, 49);
         check("缺少校验值时仅接受大小一致且唯一的同名文件", copier.Copy(noHash, MessageContent.Read(noHash).File!).RelativePath != null);
+        check("无校验值时可定位大小一致且唯一的同名文件", locator.Locate(noHash, MessageContent.Read(noHash).File!).FullPath == Path.Combine(local, name));
         string duplicateFolder = Path.Combine(local, "duplicate"); Directory.CreateDirectory(duplicateFolder); File.WriteAllBytes(Path.Combine(duplicateFolder, name), original);
         var ambiguousCopier = new AttachmentExporter(store, Path.Combine(root, "ambiguous-export"));
         check("无校验值且有多个同名文件时明确保留未导出状态", ambiguousCopier.Copy(noHash, MessageContent.Read(noHash).File!).RelativePath == null);
+        check("无校验值的同名重复附件不会误定位", ambiguousCopier.Locate(noHash, MessageContent.Read(noHash).File!).FullPath == null);
         File.WriteAllBytes(Path.Combine(local, "未下载.txt"), "missing"u8.ToArray());
         string retry = Path.Combine(root, "download-retry-export"); Exporter.Export(store, retry, "files");
         check("在微信下载后重新导出即可补上附件无需重新采集", Directory.GetFiles(retry, "未下载.txt", SearchOption.AllDirectories).Length == 1);
+        check("未下载文件定位失败且下载后再次定位可找到原文件", missingBeforeDownload && new AttachmentExporter(store, locateOutput).Locate(missing, MessageContent.Read(missing).File!).FullPath == Path.Combine(local, "未下载.txt") && !Directory.Exists(locateOutput));
         var quote = Record("quote", "A", "<msg><appmsg><title>可以这样做🙂</title><type>57</type><refermsg><displayname>B</displayname><content>需求说明</content></refermsg></appmsg></msg>", 1, 49);
         check("引用消息转为可读对话而不暴露 XML", MessageContent.Read(quote).Text == "可以这样做🙂\n引用 B：需求说明");
         var xxe = Record("xxe", "A", "<!DOCTYPE msg [<!ENTITY x SYSTEM 'file:///outside.txt'>]><msg><appmsg><title>&x;</title><type>6</type></appmsg></msg>", 1, 49);
@@ -78,5 +92,6 @@ internal static class AttachmentSelfTest
         using var reopened = new Store(data);
         var history = new AttachmentExporter(reopened, Path.Combine(root, "removed-history-export"));
         check("移除绑定和重启后仍保留附件来源用于历史导出", reopened.Targets().All(t => t.Id != "files") && history.Copy(file1, MessageContent.Read(file1).File!).RelativePath != null);
+        check("历史会话重启后仍可定位已下载附件", history.Locate(file1, parsed.File!).FullPath == Path.Combine(local, name));
     }
 }

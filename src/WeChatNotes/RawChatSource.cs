@@ -19,11 +19,7 @@ internal sealed class RawChatSource(string root) : IDisposable
     private Dictionary<string, byte[]> keys = new(StringComparer.OrdinalIgnoreCase);
     private Dictionary<string, string> names = new(StringComparer.Ordinal);
     private Dictionary<(string Room, string Sender), string> groupNicknames = [];
-    internal static string[] Accounts()
-    {
-        string path = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "xwechat_files");
-        return Directory.Exists(path) ? Directory.GetDirectories(path).Select(p => Path.Combine(p, "db_storage")).Where(Directory.Exists).ToArray() : [];
-    }
+    internal static string[] Accounts(IEnumerable<string>? knownRoots = null, CancellationToken token = default) => WeChatDirectories.Discover(knownRoots, token);
     internal static string TargetIdFor(string root, string conversation) =>
         Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(Path.GetFullPath(root).ToUpperInvariant() + "|" + conversation))).ToLowerInvariant();
     private string[] MessageFiles() => Directory.GetFiles(Path.Combine(Root, "message"), "message_*.db")

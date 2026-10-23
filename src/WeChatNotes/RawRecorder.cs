@@ -6,6 +6,7 @@ internal sealed class RawRecorder(Store store) : IDisposable
     internal bool IsBusy { get; private set; }
     internal event Action<string, string>? Status;
     internal event Action? Recorded;
+    internal string[] KnownRoots() => store.TargetSources().Values.Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
     internal RawChatSource Source(string root)
     {
         root = Path.GetFullPath(root);
@@ -20,7 +21,7 @@ internal sealed class RawRecorder(Store store) : IDisposable
         try
         {
             var targets = store.Targets();
-            foreach (var old in targets.Where(t => t.SourceRoot == null)) Status?.Invoke(old.Id, "旧版画面绑定，请移除后重新选择会话");
+            foreach (var old in targets.Where(t => t.SourceRoot == null)) Status?.Invoke(old.Id, "旧版画面绑定，仅保留历史记录；请添加原文会话");
             foreach (var group in targets.Where(t => t.SourceRoot != null && t.ConversationId != null).GroupBy(t => t.SourceRoot!, StringComparer.OrdinalIgnoreCase))
             {
                 token.ThrowIfCancellationRequested();

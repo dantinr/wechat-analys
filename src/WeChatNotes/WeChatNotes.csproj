@@ -7,7 +7,11 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <ApplicationManifest>app.manifest</ApplicationManifest>
-    <AssemblyName>WeChatNotes</AssemblyName>
+    <AssemblyName>Ripper</AssemblyName>
+    <RootNamespace>WeChatNotes</RootNamespace>
+    <Product>Ripper</Product>
+    <Title>Ripper</Title>
+    <Description>Local WeChat conversation recorder and exporter.</Description>
     <Version>$([System.IO.File]::ReadAllText('$(MSBuildThisFileDirectory)..\..\VERSION').Trim())</Version>
     <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
   </PropertyGroup>

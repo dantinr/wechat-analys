@@ -9,7 +9,7 @@ internal sealed class SelfTestForm : Form
     private readonly string root = Path.Combine(Path.GetTempPath(), "WeChatNotesTests", Guid.NewGuid().ToString("N"));
     public SelfTestForm()
     {
-        Text = "微信需求记录 · 自动验证窗口"; Size = new(820, 560); StartPosition = FormStartPosition.Manual; Location = new(40, 60);
+        Text = "Ripper · 自动验证窗口"; Size = new(820, 560); StartPosition = FormStartPosition.Manual; Location = new(40, 60);
         Font = new("Microsoft YaHei UI", 17); BackColor = Color.FromArgb(245, 245, 245);
         Controls.Add(new Label { Text = "项目需求讨论群", AutoSize = true, Location = new(30, 30) });
         Controls.Add(new Label { Text = "产品经理", AutoSize = true, Location = new(30, 95), ForeColor = Color.DimGray });
@@ -58,15 +58,14 @@ internal sealed class SelfTestForm : Form
             {
                 store.Add(record, image);
                 store.SaveTarget(new("test-target", "测试需求群", Text, image.Width, image.Height, 0, 0, image.Width, image.Height));
-                store.SaveRequirement(new("test-requirement", "订单导出", "按日期筛选，待确认字段", "待确认", id, record.ObservedAt));
             }
             using (var reopened = new Store(root))
             {
-                Check("重启后记录和需求可恢复", reopened.Captures().Count == 1 && reopened.Requirements().Count == 1 && reopened.Targets().Count == 1);
+                Check("重启后记录和会话可恢复", reopened.Captures().Count == 1 && reopened.Targets().Count == 1);
                 string export = Path.Combine(root, "export"); Exporter.Export(reopened, export);
                 var exported = JsonSerializer.Deserialize<CaptureRecord>(File.ReadAllText(Path.Combine(export, "聊天记录.jsonl")))!;
                 Check("导出 JSONL 与截图可移植", exported.Text == text && File.Exists(Path.Combine(export, exported.ImagePath)));
-                Check("需求可追溯到原始画面", File.ReadAllText(Path.Combine(export, "需求整理.md")).Contains("#record-" + id)
+                Check("导出原文保留来源锚点且不生成需求文档", !File.Exists(Path.Combine(export, "需求整理.md"))
                     && File.ReadAllText(Path.Combine(export, "聊天记录.md")).Contains("id=\"record-" + id + "\""));
                 using (var recorder = new Recorder(reopened, () => [new(Handle, Text)]))
                 {

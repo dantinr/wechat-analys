@@ -199,10 +199,13 @@ internal static class CipherPages
                 var walBefore = File.Exists(walPath) ? RawKeys.SharedRead(walPath) : [];
                 var source = RawKeys.SharedRead(path);
                 var wal = File.Exists(walPath) ? RawKeys.SharedRead(walPath) : [];
-                if (!walBefore.AsSpan().SequenceEqual(wal)) throw new IOException("微信正在写入，将重新读取快照。");
+                if (!walBefore.AsSpan().SequenceEqual(wal)) throw new IOException("微信数据库在读取过程中发生变化。");
                 return Decode(source, wal, key, token);
             }
-            catch (Exception ex) when (attempt < 2 && ex is IOException or CryptographicException) { }
+            catch (Exception ex) when (ex is IOException or CryptographicException)
+            {
+                if (attempt == 2) throw new IOException($"读取 {Path.GetFileName(path)} 连续 3 次未成功：{ex.Message}", ex);
+            }
         }
         throw new IOException("无法获取一致的微信数据库快照。");
     }
@@ -211,21 +214,44 @@ internal static class CipherPages
         if (source.Length < PageSize || source.Length % PageSize != 0 || !VerifyKey(key, source[..PageSize]))
             throw new CryptographicException("数据库第一页校验失败，请重新连接微信。");
         byte[] mac = MacKey(key, source.AsSpan(0, 16));
-        using var output = new MemoryStream();
-        for (int offset = 0; offset < source.Length; offset += PageSize)
+        byte[] header = Decrypt(key, source.AsSpan(0, PageSize), 1);
+        byte[]? output = null;
+        try
         {
-            token.ThrowIfCancellationRequested(); uint number = (uint)(offset / PageSize + 1);
-            var page = source.AsSpan(offset, PageSize);
-            if (!VerifyPage(mac, page, number)) throw new CryptographicException("数据库页校验失败，将重试快照。");
-            output.Write(Decrypt(key, page, number));
+            // https://www.sqlite.org/fileformat2.html#in_header_database_size
+            // SQLite file format 1.3.7: the authenticated header size is valid only
+            // when nonzero and the change counter matches the version-valid-for field.
+            // WeChat may preallocate zero-filled physical pages beyond that size.
+            uint physicalPages = (uint)(source.Length / PageSize);
+            uint headerPages = BinaryPrimitives.ReadUInt32BigEndian(header.AsSpan(28));
+            bool validSize = headerPages > 0 && header.AsSpan(24, 4).SequenceEqual(header.AsSpan(92, 4));
+            var committed = ReadWal(wal, token);
+            uint pages = committed.Size ?? (validSize ? headerPages : physicalPages);
+            if ((long)pages * PageSize > int.MaxValue || pages > (long)physicalPages + committed.Pages.Count)
+                throw new IOException("数据库有效页数量超限或快照缺少数据页。");
+            output = new byte[checked((int)pages * PageSize)];
+            for (uint number = 1; number <= pages; number++)
+            {
+                token.ThrowIfCancellationRequested();
+                int destination = checked((int)(number - 1) * PageSize);
+                bool fromWal = committed.Pages.TryGetValue(number, out int offset);
+                if (!fromWal && number > physicalPages) throw new IOException($"数据库快照缺少第 {number} 页。");
+                var page = fromWal ? wal.AsSpan(offset, PageSize) : source.AsSpan(destination, PageSize);
+                if (!VerifyPage(mac, page, number))
+                    throw new CryptographicException($"{(fromWal ? "WAL 消息" : "数据库")}第 {number} 页校验失败。");
+                byte[] plain = Decrypt(key, page, number);
+                try { plain.CopyTo(output, destination); }
+                finally { CryptographicOperations.ZeroMemory(plain); }
+            }
+            return output;
         }
-        ApplyWal(output, wal, key, mac, token);
-        return output.ToArray();
+        catch { if (output != null) CryptographicOperations.ZeroMemory(output); throw; }
+        finally { CryptographicOperations.ZeroMemory(header); CryptographicOperations.ZeroMemory(mac); }
     }
     // SQLite WAL checksums cover headers and encrypted page bytes, and only committed frames are used.
-    internal static void ApplyWal(MemoryStream output, byte[] wal, byte[] key, byte[] mac, CancellationToken token)
+    private static (uint? Size, Dictionary<uint, int> Pages) ReadWal(byte[] wal, CancellationToken token)
     {
-        if (wal.Length < 32) return;
+        if (wal.Length < 32) return (null, []);
         uint magic = BinaryPrimitives.ReadUInt32BigEndian(wal);
         if (magic is not (0x377f0682 or 0x377f0683) || BinaryPrimitives.ReadUInt32BigEndian(wal.AsSpan(8)) != PageSize)
             throw new IOException("不支持的微信 WAL 格式。");
@@ -245,7 +271,7 @@ internal static class CipherPages
             throw new IOException("WAL 文件头校验失败。");
         int lastCommit = -1; uint size = 0;
         var frames = new List<(uint Page, int Offset)>();
-        for (int offset = 32; offset + 24 + PageSize <= wal.Length; offset += 24 + PageSize)
+        for (int offset = 32; offset <= wal.Length - 24 - PageSize; offset += 24 + PageSize)
         {
             token.ThrowIfCancellationRequested();
             var header = wal.AsSpan(offset, 24);
@@ -257,14 +283,12 @@ internal static class CipherPages
             uint commit = BinaryPrimitives.ReadUInt32BigEndian(header[4..]);
             if (commit != 0) { lastCommit = frames.Count - 1; size = commit; }
         }
+        var pages = new Dictionary<uint, int>();
         for (int index = 0; index <= lastCommit; index++)
         {
-            var frame = frames[index]; var page = wal.AsSpan(frame.Offset, PageSize);
-            if (frame.Page > size) continue;
-            if (!VerifyPage(mac, page, frame.Page)) throw new CryptographicException("WAL 消息页校验失败。");
-            output.Position = ((long)frame.Page - 1) * PageSize;
-            output.Write(Decrypt(key, page, frame.Page));
+            var frame = frames[index];
+            if (frame.Page <= size) pages[frame.Page] = frame.Offset;
         }
-        if (lastCommit >= 0) output.SetLength((long)size * PageSize);
+        return (lastCommit >= 0 ? size : null, pages);
     }
 }

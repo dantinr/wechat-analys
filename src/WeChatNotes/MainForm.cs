@@ -10,10 +10,11 @@ public sealed class MainForm : Form
     private CancellationTokenSource cancellation = new();
     private readonly DataGridView targets = Grid();
     private readonly ConversationRecords captures;
-    private readonly DataGridView requirements = Grid();
-    private readonly TextBox search = new() { Width = 285, PlaceholderText = "在当前标签最近 500 条消息中搜索" };
+    private readonly TextBox search = new() { Width = 285, PlaceholderText = "搜索当前标签的全部已采集消息" };
     private readonly TextBox detail = new() { Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Vertical, Dock = DockStyle.Fill, BorderStyle = BorderStyle.None };
-    private readonly PictureBox picture = new() { Dock = DockStyle.Fill, SizeMode = PictureBoxSizeMode.Zoom, BackColor = Color.FromArgb(238, 241, 245) };
+    private readonly Button locateFile;
+    private readonly Label fileStatus = new() { Dock = DockStyle.Fill, AutoEllipsis = true, ForeColor = Color.DimGray };
+    private bool locating;
     private readonly Label badge = new() { AutoSize = true, ForeColor = Color.FromArgb(85, 99, 113), Text = "已暂停", Padding = new Padding(10) };
     private readonly Label footer = new() { Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft, ForeColor = Color.FromArgb(85, 99, 113) };
     private readonly NumericUpDown interval = new() { Minimum = 1, Maximum = 60, Value = 30, Width = 55 };
@@ -21,40 +22,47 @@ public sealed class MainForm : Form
     private readonly Button once;
     private readonly Button exportCurrent;
     private bool exporting;
+    private bool closingConversation;
     private bool closing;
     private bool allowClose;
 
     public MainForm(Store store)
     {
         this.store = store; recorder = new(store); captures = new(store);
-        Text = $"微信需求记录 v{Application.ProductVersion}"; Width = 1380; Height = 940; MinimumSize = new(1060, 760);
+        Text = $"Ripper v{Application.ProductVersion}"; Width = 1380; Height = 940; MinimumSize = new(1060, 760);
         StartPosition = FormStartPosition.CenterScreen; Font = new("Microsoft YaHei UI", 10);
         BackColor = Color.FromArgb(246, 248, 250);
         var layout = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(22, 18, 22, 10), ColumnCount = 1, RowCount = 6 };
         foreach (var style in new RowStyle[] { new(SizeType.Absolute, 90), new(SizeType.Absolute, 46), new(SizeType.Absolute, 135), new(SizeType.Absolute, 48), new(SizeType.Percent, 100), new(SizeType.Absolute, 40) }) layout.RowStyles.Add(style);
         var header = new Panel { Dock = DockStyle.Fill };
-        header.Controls.Add(new Label { Text = "微信需求记录", Location = new(0, 0), AutoSize = true, Font = new("Microsoft YaHei UI", 24, FontStyle.Bold), ForeColor = Color.FromArgb(24, 41, 57) });
-        header.Controls.Add(new Label { Text = $"v{Application.ProductVersion} · 将讨论留在本地，让每一条需求都有来源。", Location = new(3, 52), AutoSize = true, ForeColor = Color.FromArgb(95, 110, 125) });
+        header.Controls.Add(new Label { Text = "Ripper", Location = new(0, 0), AutoSize = true, Font = new("Microsoft YaHei UI", 24, FontStyle.Bold), ForeColor = Color.FromArgb(24, 41, 57) });
+        header.Controls.Add(new Label { Text = $"v{Application.ProductVersion} · 保留聊天原文，让每一条记录都有来源。", Location = new(3, 52), AutoSize = true, ForeColor = Color.FromArgb(95, 110, 125) });
         badge.Location = new(450, 12); header.Controls.Add(badge); layout.Controls.Add(header, 0, 0);
         var toolbar = new FlowLayoutPanel { Dock = DockStyle.Fill, WrapContents = false };
         toolbar.Controls.Add(Button("添加会话", AddTarget, true));
-        toolbar.Controls.Add(Button("移除绑定", RemoveTarget));
         start = Button("开始记录", Toggle, true); toolbar.Controls.Add(start);
         once = Button("立即采集", async (_, _) => await Poll()); toolbar.Controls.Add(once);
         toolbar.Controls.Add(new Label { Text = "间隔（秒）", AutoSize = true, Padding = new Padding(8, 8, 0, 0) }); toolbar.Controls.Add(interval);
         toolbar.Controls.Add(Button("打开数据目录", (_, _) => OpenFolder(store.Root)));
         toolbar.Controls.Add(Button("使用说明", (_, _) => MessageBox.Show(this,
-            "1. 保持 Windows 微信登录。\n2. 点击“添加会话”→“读取会话列表”，勾选群或联系人，可选择首次导入范围。\n3. 点击“开始记录”，默认每 30 秒同步一次。窗口可最小化，无需切换聊天。\n4. 选中原始消息，点击“整理为需求”，编辑需求名称、说明和状态。\n5. 选择具体会话标签，点击“导出当前聊天记录”，生成该会话的 Markdown、CSV、JSONL 和关联需求文档。\n\n通过只读连接本地聊天数据库获取原文，不使用 OCR。完整解密数据库只存在于内存中，只保存选定会话的消息。\n已下载的普通文件附件和本地原始语音可在导出时一并保存，并在 Markdown 中添加链接。SILK 语音自动转换为可播放的 WAV，同时保留原始文件，未转文字；导出语音时请保持微信登录。图片和视频仅保留文字说明 / XML。只读取已经同步到本机的消息。\n关闭程序、电脑休眠或微信退出期间停止同步；重启后点击开始可补采仍在本地的消息。\n微信升级可能需要适配。", "使用说明")));
+            "1. 保持 Windows 微信登录。\n2. 点击“添加会话”→“读取会话列表”，勾选群或联系人，可选择首次导入范围。\n3. 点击“开始记录”，默认每 30 秒同步一次。窗口可最小化，无需切换聊天。\n4. 选择会话和消息，查看原文及来源；文件消息可点击“定位文件”查找本机附件。\n5. 选择具体会话标签，点击“导出当前聊天记录”，生成该会话的 Markdown、CSV、JSONL，并导出本地文件附件和语音。\n\n通过只读连接本地聊天数据库获取原文，不使用 OCR。完整解密数据库只存在于内存中，只保存选定会话的消息。\n已下载的普通文件附件和本地原始语音可在导出时一并保存，并在 Markdown 中添加链接。SILK 语音自动转换为可播放的 WAV，同时保留原始文件，未转文字；导出语音时请保持微信登录。图片和视频仅保留文字说明 / XML。只读取已经同步到本机的消息。\n关闭程序、电脑休眠或微信退出期间停止同步；重启后点击开始可补采仍在本地的消息。\n微信升级可能需要适配。", "使用说明")));
+        toolbar.Controls.Add(Button("关于", (_, _) => MessageBox.Show(this,
+            $"Ripper\n\nFree your conversations. Own your records.\n\n版本：v{Application.ProductVersion}\n\n记录选定群或联系人的本地微信消息，支持聊天记录、附件和语音导出。\n\n数据保存在本机，不上传聊天内容。\n本项目与微信官方无隶属关系。\n\n本机数据目录：\n{store.Root}",
+            "关于 Ripper", MessageBoxButtons.OK, MessageBoxIcon.Information)));
         layout.Controls.Add(toolbar, 0, 1);
+        targets.Columns.Add("number", "会话编号");
+        targets.Columns["number"]!.AutoSizeMode = DataGridViewAutoSizeColumnMode.AllCells;
+        targets.Columns["number"]!.MinimumWidth = 90;
+        targets.Columns["number"]!.SortMode = DataGridViewColumnSortMode.NotSortable;
         targets.Columns.Add("name", "记录会话"); targets.Columns.Add("window", "记录起点"); targets.Columns.Add("status", "采集状态");
-        targets.Columns[0].FillWeight = 25; targets.Columns[1].FillWeight = 25; targets.Columns[2].FillWeight = 70;
+        targets.Columns["name"]!.FillWeight = 25; targets.Columns["window"]!.FillWeight = 25; targets.Columns["status"]!.FillWeight = 70;
         layout.Controls.Add(targets, 0, 2);
         var filter = new FlowLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(0, 8, 0, 0) };
-        filter.Controls.Add(search); filter.Controls.Add(Button("整理为需求", MakeRequirement, true));
+        filter.Controls.Add(search);
         filter.Controls.Add(new Label { Text = "原始消息文字 · 保留发送人、发送时间与消息编号", AutoSize = true, Padding = new Padding(8, 7, 0, 0), ForeColor = Color.DimGray });
         layout.Controls.Add(filter, 0, 3);
         var tabs = new TabControl { Dock = DockStyle.Fill };
-        var recordsTab = new TabPage("采集记录"); var requirementsTab = new TabPage("需求清单（双击编辑）");
+        var recordsTab = new TabPage("采集记录");
         var recordsLayout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 2 };
         recordsLayout.RowStyles.Add(new(SizeType.Absolute, 44)); recordsLayout.RowStyles.Add(new(SizeType.Percent, 100));
         var recordsToolbar = new FlowLayoutPanel { Dock = DockStyle.Fill, WrapContents = false, Padding = new Padding(0, 3, 0, 0) };
@@ -64,12 +72,16 @@ public sealed class MainForm : Form
         var split = new SplitContainer { Dock = DockStyle.Fill, Size = new(1200, 500), SplitterDistance = 700, Panel1MinSize = 350, Panel2MinSize = 300 };
         split.Panel1.Controls.Add(captures);
         var previewTabs = new TabControl { Dock = DockStyle.Fill };
-        var textTab = new TabPage("消息原文 / 来源"); textTab.Padding = new Padding(12); textTab.Controls.Add(detail);
-        var imageTab = new TabPage("旧版截图"); imageTab.Controls.Add(picture); previewTabs.TabPages.AddRange([textTab, imageTab]);
+        var textTab = new TabPage("消息原文 / 来源"); textTab.Padding = new Padding(12);
+        var previewLayout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 3 };
+        previewLayout.RowStyles.Add(new(SizeType.Absolute, 42)); previewLayout.RowStyles.Add(new(SizeType.Absolute, 44)); previewLayout.RowStyles.Add(new(SizeType.Percent, 100));
+        var fileToolbar = new FlowLayoutPanel { Dock = DockStyle.Fill, WrapContents = false };
+        locateFile = Button("定位文件", LocateFile); locateFile.Enabled = false;
+        fileToolbar.Controls.Add(locateFile); previewLayout.Controls.Add(fileToolbar, 0, 0);
+        previewLayout.Controls.Add(fileStatus, 0, 1); previewLayout.Controls.Add(detail, 0, 2);
+        textTab.Controls.Add(previewLayout); previewTabs.TabPages.Add(textTab);
         split.Panel2.Controls.Add(previewTabs); recordsLayout.Controls.Add(split, 0, 1);
-        requirements.Columns.Add("title", "需求"); requirements.Columns.Add("status", "状态"); requirements.Columns.Add("notes", "说明");
-        requirements.Columns[0].FillWeight = 30; requirements.Columns[1].FillWeight = 15; requirements.Columns[2].FillWeight = 65;
-        requirementsTab.Controls.Add(requirements); tabs.TabPages.AddRange([recordsTab, requirementsTab]); layout.Controls.Add(tabs, 0, 4);
+        tabs.TabPages.Add(recordsTab); layout.Controls.Add(tabs, 0, 4);
         layout.Controls.Add(footer, 0, 5); Controls.Add(layout);
         interval.ValueChanged += (_, _) => timer.Interval = (int)interval.Value * 1000;
         timer.Interval = (int)interval.Value * 1000; timer.Tick += async (_, _) => await Poll();
@@ -77,16 +89,16 @@ public sealed class MainForm : Form
         captures.SelectionChanged += () =>
         {
             ShowCapture(); UpdateFooter();
-            exportCurrent.Enabled = captures.SelectedConversationId != null && captures.RecentCount > 0 && !exporting && !closing;
+            exportCurrent.Enabled = captures.SelectedConversationId != null && captures.TotalCount > 0 && !exporting && !closing;
         };
-        requirements.CellDoubleClick += EditRequirement;
+        captures.CloseRequested += CloseConversation;
         recorder.Status += (id, message) =>
         {
-            foreach (DataGridViewRow row in targets.Rows) if ((string?)row.Tag == id) row.Cells[2].Value = message;
+            foreach (DataGridViewRow row in targets.Rows) if ((string?)row.Tag == id) row.Cells["status"].Value = message;
         };
         recorder.Recorded += RefreshRecords;
         FormClosing += ClosingAsync;
-        FormClosed += (_, _) => { timer.Dispose(); cancellation.Dispose(); recorder.Dispose(); picture.Image?.Dispose(); };
+        FormClosed += (_, _) => { timer.Dispose(); cancellation.Dispose(); recorder.Dispose(); };
         Shown += (_, _) => split.SplitterDistance = Math.Clamp((int)(split.ClientSize.Width * .58), split.Panel1MinSize, split.ClientSize.Width - split.Panel2MinSize - split.SplitterWidth);
         RefreshTargets(); RefreshRecords();
     }
@@ -111,30 +123,24 @@ public sealed class MainForm : Form
     {
         targets.Rows.Clear(); foreach (var item in store.Targets())
         {
-            int row = targets.Rows.Add(item.Name, item.SourceRoot == null ? "旧版画面绑定" : item.FromUnix == 0 ? "全部本地历史" : DateTimeOffset.FromUnixTimeSeconds(item.FromUnix).ToLocalTime().ToString("MM-dd HH:mm"), item.SourceRoot == null ? "请移除后重新添加会话" : "待开始 · 保持微信登录"); targets.Rows[row].Tag = item.Id;
+            int row = targets.Rows.Add(targets.Rows.Count + 1, item.Name, item.SourceRoot == null ? "旧版画面绑定" : item.FromUnix == 0 ? "全部本地历史" : DateTimeOffset.FromUnixTimeSeconds(item.FromUnix).ToLocalTime().ToString("MM-dd HH:mm"), item.SourceRoot == null ? "历史绑定 · 请添加原文会话" : "待开始 · 保持微信登录"); targets.Rows[row].Tag = item.Id;
         }
     }
     private void RefreshRecords()
     {
         captures.RefreshRecords();
-        requirements.Rows.Clear(); foreach (var item in store.Requirements())
-        {
-            int row = requirements.Rows.Add(item.Title, item.Status, item.Notes.ReplaceLineEndings(" ")); requirements.Rows[row].Tag = item;
-        }
         UpdateFooter();
     }
-    private void UpdateFooter() => footer.Text = $"当前标签最近 {captures.RecentCount} 条消息 · 显示 {captures.VisibleCount} 条 · {requirements.Rows.Count} 条需求 · 本机数据：{store.Root}";
+    private void UpdateFooter() => footer.Text = $"当前标签共 {captures.TotalCount:N0} 条消息 · 本页 {captures.VisibleCount} 条 · 本机数据：{store.Root}";
     private void ShowCapture()
     {
         var item = captures.SelectedRecord;
-        detail.Text = item == null ? "添加会话并开始记录后，这里显示原始消息。\r\n选择一条消息即可查看来源并整理需求。" : item.Message is { } message ?
+        detail.Text = item == null ? "添加会话并开始记录后，这里显示原始消息。\r\n选择一条消息即可查看原文和来源。" : item.Message is { } message ?
             $"{item.TargetName}\r\n发送人：{message.DisplaySender}\r\n群昵称：{message.GroupNickname ?? "—（未设置或本机未同步）"}\r\n发送于 {message.SentAt:yyyy-MM-dd HH:mm:ss zzz}\r\n记录于 {item.ObservedAt:yyyy-MM-dd HH:mm:ss zzz}\r\n消息类型：{RawChatSource.TypeName(message.RawType)}\r\n消息编号：{message.ServerId} / 本地 {message.LocalId}\r\n来源：{message.SourceDatabase}\r\n\r\n【消息原文】\r\n{item.Text}\r\n\r\n{item.Note}".ReplaceLineEndings(Environment.NewLine) :
             $"{item.TargetName}\r\n旧版 OCR 记录，采集于 {item.ObservedAt:yyyy-MM-dd HH:mm:ss zzz}\r\n\r\n{item.Note}\r\n\r\n{item.Text}".ReplaceLineEndings(Environment.NewLine);
-        picture.Image?.Dispose(); picture.Image = null;
-        if (item != null && !string.IsNullOrEmpty(item.ImagePath) && File.Exists(store.ImageFile(item.ImagePath)))
-        {
-            using var image = Image.FromFile(store.ImageFile(item.ImagePath)); picture.Image = new Bitmap(image);
-        }
+        bool hasFile = item != null && MessageContent.Read(item).File != null;
+        locateFile.Enabled = hasFile && !locating;
+        fileStatus.Text = hasFile ? "定位此消息在本机已下载的文件附件。" : "选择文件消息后，可定位本机已下载的附件。";
     }
     private async void AddTarget(object? sender, EventArgs e)
     {
@@ -151,18 +157,34 @@ public sealed class MainForm : Form
         }
         catch (Exception ex) { MessageBox.Show(this, ex.Message, "无法添加会话"); }
     }
-    private async void RemoveTarget(object? sender, EventArgs e)
-    {
-        if (targets.CurrentRow?.Tag is not string id) return;
-        await PauseAndDrain(); store.RemoveTarget(id); RefreshTargets(); RefreshRecords();
-    }
     private async void Toggle(object? sender, EventArgs e)
     {
         if (timer.Enabled) { await PauseAndDrain(); return; }
         if (store.Targets().Count == 0) { MessageBox.Show(this, "请先选择需要记录的群或联系人。", "尚未绑定会话"); return; }
+        ResumeRecording();
+        await Poll();
+    }
+
+    private void ResumeRecording()
+    {
         cancellation.Dispose(); cancellation = new(); recorder.Resume();
         timer.Start(); start.Text = "暂停记录"; once.Enabled = false; badge.Text = "正在记录"; badge.ForeColor = Color.FromArgb(17, 127, 91);
-        await Poll();
+    }
+
+    private async void CloseConversation(string id)
+    {
+        if (exporting || closing || closingConversation) return;
+        bool wasRecording = timer.Enabled;
+        closingConversation = true; Enabled = false;
+        try
+        {
+            await PauseAndDrain();
+            if (IsDisposed || closing) return;
+            store.CloseConversation(id); RefreshTargets(); RefreshRecords();
+            if (wasRecording && store.Targets().Count > 0) ResumeRecording();
+        }
+        catch (Exception ex) { if (!IsDisposed && !closing) MessageBox.Show(this, ex.Message, "无法关闭会话"); }
+        finally { closingConversation = false; if (!IsDisposed && !closing) Enabled = true; }
     }
     private async Task Poll()
     {
@@ -177,21 +199,40 @@ public sealed class MainForm : Form
     {
         timer.Stop(); cancellation.Cancel(); start.Text = "开始记录"; once.Enabled = true; badge.Text = "已暂停"; badge.ForeColor = Color.DimGray;
         while (recorder.IsBusy) await Task.Delay(50);
-        foreach (DataGridViewRow row in targets.Rows) row.Cells[2].Value = "已暂停 · 点击开始记录可恢复";
+        foreach (DataGridViewRow row in targets.Rows) row.Cells["status"].Value = "已暂停 · 点击开始记录可恢复";
     }
-    private void MakeRequirement(object? sender, EventArgs e)
+    private async void LocateFile(object? sender, EventArgs e)
     {
-        if (captures.SelectedRecord is not CaptureRecord source) return;
-        using var dialog = new RequirementDialog(source);
-        if (dialog.ShowDialog(this) == DialogResult.OK && dialog.Result is { } item) { store.SaveRequirement(item); RefreshRecords(); }
-    }
-    private void EditRequirement(object? sender, DataGridViewCellEventArgs e)
-    {
-        if (e.RowIndex < 0 || requirements.Rows[e.RowIndex].Tag is not Requirement item) return;
-        var source = store.Captures().FirstOrDefault(c => c.Id == item.CaptureId);
-        if (source == null) return;
-        using var dialog = new RequirementDialog(source, item);
-        if (dialog.ShowDialog(this) == DialogResult.OK && dialog.Result is { } edited) { store.SaveRequirement(edited); RefreshRecords(); }
+        if (locating || captures.SelectedRecord is not { } record || MessageContent.Read(record).File is not { } file) return;
+        locating = true; locateFile.Enabled = false; locateFile.Text = "正在定位…"; fileStatus.Text = "正在查找本地文件…";
+        try
+        {
+            var finder = new AttachmentExporter(store, store.Root);
+            var result = await Task.Run(() => finder.Locate(record, file));
+            if (IsDisposed || closing || captures.SelectedRecord?.Id != record.Id) return;
+            fileStatus.Text = result.Status;
+            if (result.FullPath is { } path && File.Exists(path))
+            {
+                Process.Start(new ProcessStartInfo("explorer.exe", $"/select,\"{path}\"") { UseShellExecute = true });
+                fileStatus.Text = "已在资源管理器中定位本地文件。";
+            }
+            else
+            {
+                if (result.FullPath != null) fileStatus.Text = "文件已移动或删除。";
+                MessageBox.Show(this, fileStatus.Text + "\n请先在微信下载文件后重试。", "无法定位文件", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            }
+        }
+        catch (Exception ex)
+        {
+            if (!IsDisposed && !closing && captures.SelectedRecord?.Id == record.Id)
+            { fileStatus.Text = "定位文件失败"; MessageBox.Show(this, ex.Message, "无法定位文件"); }
+        }
+        finally
+        {
+            locating = false;
+            if (!IsDisposed)
+            { locateFile.Text = "定位文件"; locateFile.Enabled = captures.SelectedRecord is { } selected && MessageContent.Read(selected).File != null; }
+        }
     }
     private async void Export(object? sender, EventArgs e)
     {
@@ -200,12 +241,17 @@ public sealed class MainForm : Form
         await PauseAndDrain();
         using var dialog = new FolderBrowserDialog { Description = "选择导出位置，将在其中新建带时间的导出文件夹", UseDescriptionForTitle = true };
         if (dialog.ShowDialog(this) != DialogResult.OK) return;
-        string folder = Path.Combine(dialog.SelectedPath, "微信需求导出_" + DateTimeOffset.UtcNow.ToOffset(TimeSpan.FromHours(8)).ToString("yyyyMMdd_HHmmss") + "_" + Guid.NewGuid().ToString("N")[..6]);
-        exporting = true; Enabled = false;
+        string folder = Path.Combine(dialog.SelectedPath, "Ripper_导出_" + DateTimeOffset.UtcNow.ToOffset(TimeSpan.FromHours(8)).ToString("yyyyMMdd_HHmmss") + "_" + Guid.NewGuid().ToString("N")[..6]);
+        exporting = true;
         badge.Text = "正在导出当前会话、文件附件及语音…";
-        try { await Task.Run(() => Exporter.Export(store, folder, targetId)); OpenFolder(folder); badge.Text = "当前会话导出完成 · 采集已暂停"; }
-        catch (Exception ex) { MessageBox.Show(this, "导出未完成：" + ex.Message, "导出失败"); }
-        finally { exporting = false; Enabled = true; }
+        try
+        {
+            using var progress = new ExportProgressDialog(updates => Exporter.Export(store, folder, targetId, updates));
+            if (progress.ShowDialog(this) != DialogResult.OK) throw progress.Failure ?? new IOException("导出未完成。");
+            badge.Text = "当前会话导出完成 · 采集已暂停"; OpenFolder(folder);
+        }
+        catch (Exception ex) { badge.Text = "导出未完成 · 采集已暂停"; MessageBox.Show(this, "导出未完成：" + ex.Message, "导出失败"); }
+        finally { exporting = false; }
     }
     private static void OpenFolder(string folder) => Process.Start(new ProcessStartInfo(folder) { UseShellExecute = true });
     private async void ClosingAsync(object? sender, FormClosingEventArgs e)

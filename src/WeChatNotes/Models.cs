@@ -19,7 +19,6 @@ public sealed record RawMessageInfo(string SourceDatabase, long LocalId, long Se
     public string DisplaySender => !string.IsNullOrWhiteSpace(Sender) ? Sender
         : !string.IsNullOrWhiteSpace(SenderId) ? SenderId : "未知发送人 / 系统";
 }
-public sealed record Requirement(string Id, string Title, string Notes, string Status, string CaptureId, DateTimeOffset CreatedAt);
 
 public static partial class TextDiff
 {

@@ -9,29 +9,41 @@ internal sealed record ExportedVoice(string Name, string? RelativePath, string S
 internal sealed class VoiceExporter(Store store, string folder,
     Func<string, IReadOnlyList<CaptureRecord>, Dictionary<string, VoicePayload>>? read = null)
 {
-    internal Dictionary<string, ExportedVoice> Copy(IReadOnlyList<CaptureRecord> captures)
+    internal Dictionary<string, ExportedVoice> Copy(IReadOnlyList<CaptureRecord> captures, IProgress<ExportProgress>? progress = null)
     {
         var result = new Dictionary<string, ExportedVoice>(StringComparer.Ordinal);
         var sources = store.TargetSources();
         var voices = captures.Where(c => c.Message != null && (c.Message.RawType & 0xffffffff) == 34).ToList();
+        int completed = 0;
+        if (voices.Count > 0) progress?.Report(new("导出语音", 0, voices.Count));
         foreach (var record in voices.Where(c => !sources.ContainsKey(c.TargetId)))
+        {
             result[record.Id] = new("", null, "缺少语音来源目录，请重新绑定原会话后导出");
+            progress?.Report(new("导出语音", ++completed, voices.Count));
+        }
         foreach (var group in voices.Where(c => sources.ContainsKey(c.TargetId)).GroupBy(c => sources[c.TargetId], StringComparer.OrdinalIgnoreCase))
         {
             Dictionary<string, VoicePayload>? payloads = null;
+            int processed = 0;
             try
             {
+                progress?.Report(new("读取本地语音库"));
                 payloads = (read ?? RawVoiceSource.Read)(group.Key, group.ToList());
+                progress?.Report(new("导出语音", completed, voices.Count));
                 foreach (var record in group)
                 {
                     result[record.Id] = payloads.TryGetValue(record.Id, out var payload)
                         ? Save(record, payload) : new("", null, "未找到对应的本地音频");
+                    processed++;
+                    progress?.Report(new("导出语音", ++completed, voices.Count));
                 }
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException or CryptographicException or SqliteException or ArgumentException)
             {
                 foreach (var record in group)
                     result[record.Id] = new("", null, "无法读取本地语音库，请保持微信登录、加载语音后重新导出");
+                completed += group.Count() - processed;
+                progress?.Report(new("导出语音", completed, voices.Count));
             }
             finally
             {

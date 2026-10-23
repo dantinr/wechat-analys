@@ -6,22 +6,36 @@ namespace WeChatNotes;
 
 public static class Exporter
 {
-    public static void Export(Store store, string folder, string? targetId = null) => Export(store, folder, targetId, null);
+    public static void Export(Store store, string folder, string? targetId = null, IProgress<ExportProgress>? progress = null) => Export(store, folder, targetId, null, progress);
 
     internal static void Export(Store store, string folder, string? targetId,
-        Func<string, IReadOnlyList<CaptureRecord>, Dictionary<string, VoicePayload>>? readVoices)
+        Func<string, IReadOnlyList<CaptureRecord>, Dictionary<string, VoicePayload>>? readVoices, IProgress<ExportProgress>? progress = null)
     {
+        var updates = new ExportProgressReporter(progress);
+        updates.Report(new("准备导出记录"));
         Directory.CreateDirectory(folder);
         var captures = store.Captures(targetId: targetId);
-        var captureIds = captures.Select(c => c.Id).ToHashSet(StringComparer.Ordinal);
-        var requirements = store.Requirements().Where(r => targetId == null || captureIds.Contains(r.CaptureId)).ToList();
-        var content = captures.ToDictionary(c => c.Id, MessageContent.Read, StringComparer.Ordinal);
+        var content = new Dictionary<string, ReadableMessage>(StringComparer.Ordinal);
+        int completed = 0;
+        updates.Report(new("整理消息内容", 0, captures.Count));
+        foreach (var capture in captures)
+        {
+            content[capture.Id] = MessageContent.Read(capture);
+            updates.Report(new("整理消息内容", ++completed, captures.Count));
+        }
         var copier = new AttachmentExporter(store, folder);
         var attachments = new Dictionary<string, ExportedAttachment>(StringComparer.Ordinal);
-        foreach (var capture in captures)
-            if (content[capture.Id].File is { } file) attachments[capture.Id] = copier.Copy(capture, file);
-        var voices = new VoiceExporter(store, folder, readVoices).Copy(captures);
+        var files = captures.Where(c => content[c.Id].File != null).ToList();
+        completed = 0;
+        if (files.Count > 0) updates.Report(new("导出文件附件", 0, files.Count));
+        foreach (var capture in files)
+        {
+            attachments[capture.Id] = copier.Copy(capture, content[capture.Id].File!);
+            updates.Report(new("导出文件附件", ++completed, files.Count));
+        }
+        var voices = new VoiceExporter(store, folder, readVoices).Copy(captures, updates);
         var utf8 = new UTF8Encoding(true);
+        completed = 0; updates.Report(new("写入聊天记录", 0, captures.Count));
         using (var json = new StreamWriter(Path.Combine(folder, "聊天记录.jsonl"), false, new UTF8Encoding(false)))
         using (var csv = new StreamWriter(Path.Combine(folder, "聊天记录.csv"), false, utf8))
         using (var markdown = new StreamWriter(Path.Combine(folder, "聊天记录.md"), false, utf8))
@@ -53,8 +67,10 @@ public static class Exporter
                 if (attachments.TryGetValue(capture.Id, out var attachment)) markdown.WriteLine(AttachmentText(attachment) + "\n");
                 if (voice != null) markdown.WriteLine(VoiceText(voice) + "\n");
                 if (imagePath.Length > 0) markdown.WriteLine($"[查看旧版截图]({imagePath})\n");
+                updates.Report(new("写入聊天记录", ++completed, captures.Count));
             }
         }
+        completed = 0; updates.Report(new("生成对话文档", 0, captures.Count));
         using (var dialogue = new StreamWriter(Path.Combine(folder, "对话内容.md"), false, utf8))
         {
             dialogue.WriteLine("# 对话内容\n");
@@ -67,16 +83,11 @@ public static class Exporter
                     : voices.TryGetValue(capture.Id, out var voice) ? VoiceText(voice) : Md(content[capture.Id].Text);
                 var time = (capture.Message?.SentAt ?? capture.ObservedAt).ToOffset(TimeSpan.FromHours(8));
                 dialogue.WriteLine($"{prefix}{Md(sender)}：{body} （{(capture.Message == null ? "记录于 " : "")}{time:yyyy-MM-dd HH:mm:ss zzz}）\n".ReplaceLineEndings(Environment.NewLine));
+                updates.Report(new("生成对话文档", ++completed, captures.Count));
             }
         }
-        using (var file = new StreamWriter(Path.Combine(folder, "需求整理.md"), false, utf8))
-        {
-            file.WriteLine("# 需求整理\n\n以下条目由使用者手动整理，来源链接指向原始聊天消息。\n");
-            if (requirements.Count == 0) file.WriteLine("暂无需求。请在程序中选中采集记录，点击“整理为需求”。\n");
-            foreach (var item in requirements)
-                file.WriteLine($"## {Md(item.Title)}\n\n状态：{Md(item.Status)}\n\n{Quote(item.Notes)}\n\n[查看来源消息](聊天记录.md#record-{item.CaptureId})\n");
-        }
-        File.WriteAllText(Path.Combine(folder, "使用说明.txt"), "本目录为微信需求记录的本地导出。\n对话内容.md：按发送时间排序的“发送人：对话内容 + 时间”，文件和语音消息附带本地链接或未导出说明。\n聊天记录.md：消息原文、发送人、发送时间和来源编号。\n聊天记录.csv：适合表格软件，包含语音文件相对路径、导出状态和原始语音路径。\n聊天记录.jsonl：每行一条完整记录，Message.RawContent 保留数据库原始正文。\n需求整理.md：手动整理的需求及来源链接。\n附件/：已下载并匹配的文件附件，保留原始文件名；不同消息分目录保存，避免同名文件覆盖。\n语音/：按会话、消息编号及发送时间匹配的本地原始音频，不同消息分目录保存；SILK 自动转换为 24 kHz、单声道、16 位 PCM WAV，可用常见播放器打开，同时保留 .silk 原文件；转换失败时保留原文件并注明原因。未进行语音转文字。未识别的音频格式按 .bin 原样保存。\n只包含本机已同步、选定会话及导入范围内的消息。未找到的文件或语音在对话内容中明确标注；请保持微信登录，先在微信下载或加载后重新导出。图片和视频不提取原文件。旧版 OCR 记录有明确标记。\n", utf8);
+        File.WriteAllText(Path.Combine(folder, "使用说明.txt"), "本目录为Ripper的本地导出。\n对话内容.md：按发送时间排序的“发送人：对话内容 + 时间”，文件和语音消息附带本地链接或未导出说明。\n聊天记录.md：消息原文、发送人、发送时间和来源编号。\n聊天记录.csv：适合表格软件，包含语音文件相对路径、导出状态和原始语音路径。\n聊天记录.jsonl：每行一条完整记录，Message.RawContent 保留数据库原始正文。\n附件/：已下载并匹配的文件附件，保留原始文件名；不同消息分目录保存，避免同名文件覆盖。\n语音/：按会话、消息编号及发送时间匹配的本地原始音频，不同消息分目录保存；SILK 自动转换为 24 kHz、单声道、16 位 PCM WAV，可用常见播放器打开，同时保留 .silk 原文件；转换失败时保留原文件并注明原因。未进行语音转文字。未识别的音频格式按 .bin 原样保存。\n只包含本机已同步、选定会话及导入范围内的消息。未找到的文件或语音在对话内容中明确标注；请保持微信登录，先在微信下载或加载后重新导出。图片和视频不提取原文件。旧版 OCR 记录有明确标记。\n", utf8);
+        updates.Report(new("导出完成", 1, 1));
     }
 
     internal static string Csv(string text)

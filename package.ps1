@@ -4,11 +4,11 @@ param([switch]$Standalone)
 $ErrorActionPreference = 'Stop'
 $wechatNotesPackageRoot = Join-Path $PSScriptRoot 'artifacts\packages'
 $wechatNotesStage = Join-Path $wechatNotesPackageRoot ('staging-' + [Guid]::NewGuid().ToString('N'))
-$wechatNotesApp = Join-Path $wechatNotesStage 'WeChatNotes'
+$wechatNotesApp = Join-Path $wechatNotesStage 'Ripper'
 $wechatNotesVersion = (Get-Content -LiteralPath (Join-Path $PSScriptRoot 'VERSION') -Raw).Trim()
 if ($wechatNotesVersion -notmatch '^\d+\.\d+\.\d+([-.][A-Za-z0-9.]+)?$') { throw '项目版本号无效。' }
 & (Join-Path $PSScriptRoot 'build.ps1') -OutputDirectory $wechatNotesApp -SkipShortcut -Standalone:$Standalone
-$wechatNotesEntry = if ($Standalone) { 'WeChatNotes.exe' } else { 'WeChatNotes.dll' }
+$wechatNotesEntry = if ($Standalone) { 'Ripper.exe' } else { 'Ripper.dll' }
 $wechatNotesReportName = if ($Standalone) { 'raw-tests-standalone.json' } else { 'raw-tests.json' }
 & (Join-Path $PSScriptRoot 'test.ps1') -Application (Join-Path $wechatNotesApp $wechatNotesEntry) -Report (Join-Path $wechatNotesPackageRoot $wechatNotesReportName)
 
@@ -18,11 +18,11 @@ $wechatNotesForbidden = @(Get-ChildItem -LiteralPath $wechatNotesApp -Recurse -F
 })
 if ($wechatNotesForbidden.Count -gt 0) { throw '发布目录含本机数据或诊断文件，已停止打包。' }
 $wechatNotesBinarySuffix = if ($Standalone) { 'win-x64-standalone' } else { 'win-x64' }
-$wechatNotesBinaryZip = Join-Path $wechatNotesPackageRoot "WeChatNotes-$wechatNotesVersion-$wechatNotesBinarySuffix.zip"
-$wechatNotesSourceZip = Join-Path $wechatNotesPackageRoot "WeChatNotes-$wechatNotesVersion-source.zip"
+$wechatNotesBinaryZip = Join-Path $wechatNotesPackageRoot "Ripper-$wechatNotesVersion-$wechatNotesBinarySuffix.zip"
+$wechatNotesSourceZip = Join-Path $wechatNotesPackageRoot "Ripper-$wechatNotesVersion-source.zip"
 Compress-Archive -LiteralPath $wechatNotesApp -DestinationPath $wechatNotesBinaryZip -Force
 Compress-Archive -LiteralPath (Join-Path $wechatNotesApp 'source') -DestinationPath $wechatNotesSourceZip -Force
-$wechatNotesChecksums = foreach ($wechatNotesArchive in (Get-ChildItem -LiteralPath $wechatNotesPackageRoot -Filter 'WeChatNotes-*.zip' -File | Sort-Object Name)) {
+$wechatNotesChecksums = foreach ($wechatNotesArchive in (Get-ChildItem -LiteralPath $wechatNotesPackageRoot -Filter 'Ripper-*.zip' -File | Sort-Object Name)) {
     $wechatNotesHash = Get-FileHash -LiteralPath $wechatNotesArchive.FullName -Algorithm SHA256
     '{0}  {1}' -f $wechatNotesHash.Hash.ToLowerInvariant(), $wechatNotesArchive.Name
 }

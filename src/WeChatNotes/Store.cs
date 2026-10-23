@@ -14,17 +14,19 @@ public sealed class Store : IDisposable
         Directory.CreateDirectory(Root);
         db = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = Path.Combine(Root, "records.sqlite3") }.ToString());
         db.Open();
+        db.CreateFunction<string, string, bool>("wechat_contains", (text, term) => text.Contains(term, StringComparison.OrdinalIgnoreCase), isDeterministic: true);
         using var command = db.CreateCommand();
         command.CommandText = """
             PRAGMA journal_mode=WAL;
             PRAGMA synchronous=FULL;
             CREATE TABLE IF NOT EXISTS targets(id TEXT PRIMARY KEY, json TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS target_sources(id TEXT PRIMARY KEY, source_root TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS closed_conversations(id TEXT PRIMARY KEY);
             INSERT OR IGNORE INTO target_sources(id,source_root)
                 SELECT id,json_extract(json,'$.SourceRoot') FROM targets WHERE json_extract(json,'$.SourceRoot') IS NOT NULL;
             CREATE TABLE IF NOT EXISTS captures(id TEXT PRIMARY KEY, target_id TEXT NOT NULL, observed_at TEXT NOT NULL, json TEXT NOT NULL);
             CREATE INDEX IF NOT EXISTS captures_target_time ON captures(target_id, observed_at);
-            CREATE TABLE IF NOT EXISTS requirements(id TEXT PRIMARY KEY, json TEXT NOT NULL);
+            CREATE INDEX IF NOT EXISTS captures_target_order ON captures(target_id);
             CREATE TABLE IF NOT EXISTS message_fingerprints(id TEXT PRIMARY KEY, fingerprint TEXT NOT NULL);
             """;
         command.ExecuteNonQuery();
@@ -44,6 +46,7 @@ public sealed class Store : IDisposable
         command.CommandText = """
             SELECT c.target_id,json_extract(c.json,'$.TargetName') FROM captures c
             JOIN (SELECT target_id,MAX(rowid) latest FROM captures GROUP BY target_id) last ON c.rowid=last.latest
+            WHERE NOT EXISTS (SELECT 1 FROM closed_conversations hidden WHERE hidden.id=c.target_id)
             ORDER BY c.rowid
             """;
         using var reader = command.ExecuteReader();
@@ -51,10 +54,54 @@ public sealed class Store : IDisposable
         while (reader.Read()) result.Add((reader.GetString(0), reader.GetString(1)));
         return result;
     }
-    public List<Requirement> Requirements() => Read<Requirement>("SELECT json FROM requirements ORDER BY rowid");
+    internal CapturePage CapturePage(int pageSize, long pageNumber = 1, string? targetId = null, string search = "", string? anchorId = null)
+    {
+        if (pageSize is < 1 or > 500) throw new ArgumentOutOfRangeException(nameof(pageSize));
+        bool filtering = !string.IsNullOrWhiteSpace(search);
+        string scope = targetId == null ? "1=1" : "target_id=$target";
+        string filter = scope + (filtering ? """
+             AND wechat_contains(
+                COALESCE(json_extract(json,'$.Text'),'') || char(10) ||
+                COALESCE(json_extract(json,'$.TargetName'),'') || char(10) ||
+                COALESCE(json_extract(json,'$.Message.Sender'),'') || char(10) ||
+                COALESCE(json_extract(json,'$.Message.SenderId'),'') || char(10) ||
+                COALESCE(json_extract(json,'$.Message.GroupNickname'),''),$search)
+            """ : "");
+        SqliteCommand Command(string sql)
+        {
+            var command = db.CreateCommand(); command.CommandText = sql;
+            if (targetId != null) command.Parameters.AddWithValue("$target", targetId);
+            if (filtering) command.Parameters.AddWithValue("$search", search);
+            return command;
+        }
+        long Count(string predicate)
+        {
+            using var command = Command($"SELECT COUNT(*) FROM captures WHERE {predicate}");
+            return (long)command.ExecuteScalar()!;
+        }
+        long total = Count(scope), matches = filtering ? Count(filter) : total;
+        long pageCount = matches == 0 ? 1 : (matches - 1) / pageSize + 1;
+        if (anchorId != null)
+        {
+            using var anchor = Command($"SELECT rowid FROM captures WHERE {filter} AND id=$anchor");
+            anchor.Parameters.AddWithValue("$anchor", anchorId);
+            if (anchor.ExecuteScalar() is long rowid)
+            {
+                using var rank = Command($"SELECT COUNT(*) FROM captures WHERE {filter} AND rowid>$rowid");
+                rank.Parameters.AddWithValue("$rowid", rowid);
+                pageNumber = (long)rank.ExecuteScalar()! / pageSize + 1;
+            }
+        }
+        pageNumber = Math.Clamp(pageNumber, 1, pageCount);
+        using var query = Command($"SELECT json FROM captures WHERE {filter} ORDER BY rowid DESC LIMIT $limit OFFSET $offset");
+        query.Parameters.AddWithValue("$limit", pageSize); query.Parameters.AddWithValue("$offset", (pageNumber - 1) * pageSize);
+        using var reader = query.ExecuteReader(); var records = new List<CaptureRecord>();
+        while (reader.Read()) records.Add(JsonSerializer.Deserialize<CaptureRecord>(reader.GetString(0))!);
+        return new(total, matches, pageNumber, pageCount, records);
+    }
     public void SaveTarget(Target target)
     {
-        Execute("INSERT OR REPLACE INTO targets(id,json) VALUES($id,$json)", target.Id, target);
+        Execute("INSERT OR REPLACE INTO targets(id,json) VALUES($id,$json); DELETE FROM closed_conversations WHERE id=$id", target.Id, target);
         if (!string.IsNullOrEmpty(target.SourceRoot))
         {
             using var command = db.CreateCommand();
@@ -70,7 +117,14 @@ public sealed class Store : IDisposable
         return sources;
     }
     public void RemoveTarget(string id) => Execute("DELETE FROM targets WHERE id=$id", id, null);
-    public void SaveRequirement(Requirement item) => Execute("INSERT OR REPLACE INTO requirements(id,json) VALUES($id,$json)", item.Id, item);
+
+    internal void CloseConversation(string id)
+    {
+        using var transaction = db.BeginTransaction();
+        using var command = db.CreateCommand(); command.Transaction = transaction;
+        command.CommandText = "INSERT OR IGNORE INTO closed_conversations(id) VALUES($id); DELETE FROM targets WHERE id=$id";
+        command.Parameters.AddWithValue("$id", id); command.ExecuteNonQuery(); transaction.Commit();
+    }
 
     public void Add(CaptureRecord record, Bitmap crop)
     {
@@ -149,3 +203,5 @@ public sealed class Store : IDisposable
     }
     public void Dispose() => db.Dispose();
 }
+
+internal sealed record CapturePage(long TotalCount, long MatchCount, long PageNumber, long PageCount, List<CaptureRecord> Records);
