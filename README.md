@@ -15,11 +15,11 @@ Windows 本地程序，直接读取个人微信的原始消息文字，记录指
 
 ## 运行环境
 
-Windows 10 2004+、x64 系统与 .NET 10 Desktop Runtime。构建源码需要 .NET 10 SDK。无需 OCR 组件。
+Windows 10 2004+、x64 系统。独立 EXE 版本包含运行环境；精简 DLL 版本需要 .NET 10 Desktop Runtime。构建源码需要 .NET 10 SDK。无需 OCR 组件。
 
 ## 使用
 
-1. 将 Windows 发布包完整解压，双击 `启动.cmd`，保持微信登录。从源码构建时，程序位于 `dist/WeChatNotes/`。
+1. 将 Windows 发布包完整解压，独立 EXE 版本双击 `WeChatNotes.exe`，DLL 版本双击 `启动.cmd`，保持微信登录。从源码构建时，分别位于 `dist/WeChatNotes-exe/` 和 `dist/WeChatNotes/`。
 2. 点击“添加会话”→“读取会话列表”，勾选需要记录的群或联系人。默认自动查找 `Documents/xwechat_files/<账号>/db_storage`；自定义存储位置可手动选择目录。
 3. 选择首次导入范围：从添加时开始、最近 24 小时、最近 7 天、全部本地历史。
 4. 点击“开始记录”，默认每 3 秒同步一次。无需打开独立窗口；微信窗口可最小化、遮挡、切换或滚动。
@@ -28,7 +28,7 @@ Windows 10 2004+、x64 系统与 .NET 10 Desktop Runtime。构建源码需要 .N
 
 本地记录在 `%LOCALAPPDATA%/WeChatNotes/records.sqlite3`。移除会话保留已记录内容；再次添加相同会话不会复制同一条消息。默认启动暂停，点击开始后补采所选范围内仍保存在微信本地库中的消息。旧版截图绑定需要移除并重新选择会话，旧记录仍可查看和导出。
 
-程序通过已安装的 .NET 10 Desktop Runtime 启动，也可在程序目录执行 `dotnet WeChatNotes.dll`。本地构建会另外生成快捷方式；公开发布包使用可随目录移动的 `启动.cmd`。
+独立 EXE 版本无需另装 .NET。DLL 版本通过已安装的 .NET 10 Desktop Runtime 启动，也可在程序目录执行 `dotnet WeChatNotes.dll`。本地构建会另外生成快捷方式；公开发布包使用可随目录移动的启动文件。
 
 ## 实现与边界
 
@@ -45,8 +45,11 @@ Windows 10 2004+、x64 系统与 .NET 10 Desktop Runtime。构建源码需要 .N
 
 ```powershell
 .\build.ps1
+# 独立单文件 EXE，包含运行环境：
+.\build.ps1 -Standalone
 .\test.ps1
 .\package.ps1
+.\package.ps1 -Standalone
 # 仅做本机只读连接诊断，报告不含密钥、联系人标识和聊天正文：
 dotnet .\dist\WeChatNotes\WeChatNotes.dll --raw-probe .\artifacts\raw-probe.json
 ```

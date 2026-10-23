@@ -6,6 +6,7 @@ NuGet 依赖：
 
 - Microsoft.Data.Sqlite 10.0.11、SQLitePCLRaw：各自的 MIT / Apache-2.0 许可证及 SQLite public domain 条款，详见其 NuGet 包。
 - [ZstdSharp.Port 0.8.8](https://github.com/oleg-st/ZstdSharp)：MIT，Copyright (c) 2021 Oleg Stepanischev。下附许可证。
+- 独立 EXE 版本包含 .NET 和 Windows Desktop 运行环境，其对应许可证及第三方说明随包附在 `licenses/` 下。
 
 ## ZstdSharp MIT License
 
