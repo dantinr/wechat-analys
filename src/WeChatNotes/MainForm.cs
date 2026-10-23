@@ -10,6 +10,7 @@ public sealed class MainForm : Form
     private CancellationTokenSource cancellation = new();
     private readonly DataGridView targets = Grid();
     private readonly ContextMenuStrip targetMenu = new();
+    private readonly AccountProfileView accountProfile = new();
     private readonly ConversationRecords captures;
     private readonly TextBox search = new() { Width = 285, PlaceholderText = "搜索当前标签的全部已采集消息", AccessibleName = "会话搜索" };
     private readonly TextBox detail = new() { Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Vertical, Dock = DockStyle.Fill, BorderStyle = BorderStyle.None };
@@ -40,6 +41,8 @@ public sealed class MainForm : Form
         header.Controls.Add(new Label { Text = "Ripper", Location = new(0, 0), AutoSize = true, Font = new("Microsoft YaHei UI", 24, FontStyle.Bold), ForeColor = Color.FromArgb(24, 41, 57) });
         header.Controls.Add(new Label { Text = $"v{Application.ProductVersion} · 保留聊天原文，让每一条记录都有来源。", Location = new(3, 52), AutoSize = true, ForeColor = Color.FromArgb(95, 110, 125) });
         badge.Location = new(450, 12); header.Controls.Add(badge); layout.Controls.Add(header, 0, 0);
+        accountProfile.Dock = DockStyle.Right; header.Controls.Add(accountProfile);
+        header.Resize += (_, _) => badge.MaximumSize = new(Math.Max(80, header.ClientSize.Width - accountProfile.Width - badge.Left - 16), 64);
         var toolbar = new FlowLayoutPanel { Dock = DockStyle.Fill, WrapContents = false };
         toolbar.Controls.Add(Button("添加会话", AddTarget, true));
         start = Button("开始记录", Toggle, true); toolbar.Controls.Add(start);
@@ -96,6 +99,7 @@ public sealed class MainForm : Form
         captures.SelectionChanged += () =>
         {
             ShowCapture(); UpdateFooter();
+            UpdateAccountProfile();
             exportCurrent.Enabled = captures.SelectedConversationId != null && captures.TotalCount > 0 && !exporting && !closing;
         };
         captures.CloseRequested += CloseConversation;
@@ -107,6 +111,7 @@ public sealed class MainForm : Form
         FormClosing += ClosingAsync;
         FormClosed += (_, _) => { targetMenu.Dispose(); timer.Dispose(); cancellation.Dispose(); recorder.Dispose(); };
         Shown += (_, _) => split.SplitterDistance = Math.Clamp((int)(split.ClientSize.Width * .58), split.Panel1MinSize, split.ClientSize.Width - split.Panel2MinSize - split.SplitterWidth);
+        Shown += (_, _) => UpdateAccountProfile();
         RefreshTargets(); RefreshRecords();
     }
 
@@ -182,6 +187,13 @@ public sealed class MainForm : Form
     {
         captures.RefreshRecords();
         UpdateFooter();
+    }
+    private void UpdateAccountProfile()
+    {
+        if (!IsHandleCreated || closing || IsDisposed) return;
+        string? id = captures.SelectedConversationId;
+        string? root = id == null ? null : store.Targets().FirstOrDefault(t => t.Id == id)?.SourceRoot ?? store.TargetSources().GetValueOrDefault(id);
+        _ = accountProfile.ShowAccountAsync(root);
     }
     private void UpdateFooter() => footer.Text = $"当前标签共 {captures.TotalCount:N0} 条消息 · 本页 {captures.VisibleCount} 条 · 本机数据：{store.Root}";
     private void ShowCapture()

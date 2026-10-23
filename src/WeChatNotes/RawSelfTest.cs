@@ -163,6 +163,7 @@ internal static class RawSelfTest
             ConversationSelfTest.Run(root, report, Check);
             PaginationSelfTest.Run(root, report, Check);
             ConversationOptionsSelfTest.Run(root, Check);
+            AccountProfileSelfTest.Run(root, report, Check);
             ExportProgressSelfTest.Run(root, report, Check);
             AttachmentSelfTest.Run(root, Check);
             VoiceSelfTest.Run(root, Check);
