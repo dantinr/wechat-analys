@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using System.Collections.Concurrent;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
@@ -6,33 +7,50 @@ using Whisper.net;
 
 namespace WeChatNotes;
 
-public sealed record VoiceTranscriptionOptions(string ModelPath);
+public sealed record VoiceTranscriptionOptions(string ModelPath, int MaxParallelism = 4)
+{
+    internal int Parallelism => Math.Clamp(MaxParallelism, 1, 8);
+}
 public sealed record VoiceTranscript(string? Text, string Status, string Model = "Whisper Small (offline)");
 
-internal sealed class OfflineTranscriber(string modelPath) : IDisposable
+internal sealed class OfflineTranscriber(string modelPath, int parallelism = 4) : IDisposable
 {
-    private WhisperFactory? factory;
-    private WhisperProcessor? processor;
-    private string? failure;
+    private readonly Lazy<WhisperFactory> factory = new(() => LoadFactory(modelPath));
+    private readonly ConcurrentBag<WhisperProcessor> processors = new();
+    private readonly object builderLock = new();
+    private readonly SemaphoreSlim slots = new(Math.Clamp(parallelism, 1, 8));
+    private int createdProcessors;
+    internal int CreatedProcessors => createdProcessors;
+
+    private static WhisperFactory LoadFactory(string path)
+    {
+        if (!SpeechModel.Supported) throw new PlatformNotSupportedException();
+        using (var file = File.OpenRead(path))
+            if (file.Length != SpeechModel.Length || !Convert.ToHexString(SHA256.HashData(file)).Equals(SpeechModel.Hash, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidDataException("模型校验失败");
+        return WhisperFactory.FromPath(path);
+    }
 
     internal VoiceTranscript Transcribe(string path)
     {
-        if (failure != null) return new(null, failure);
+        slots.Wait();
+        WhisperProcessor? processor = null;
         float[]? samples = null;
         try
         {
             samples = ReadSamples(path);
             if (!HasSpeechEnergy(samples)) return new(null, "未检测到可识别语音");
-            if (processor == null)
+            if (!processors.TryTake(out processor))
             {
-                if (!SpeechModel.Supported) throw new PlatformNotSupportedException();
-                using (var file = File.OpenRead(modelPath))
-                    if (file.Length != SpeechModel.Length || !Convert.ToHexString(SHA256.HashData(file)).Equals(SpeechModel.Hash, StringComparison.OrdinalIgnoreCase))
-                        throw new InvalidDataException("模型校验失败");
-                factory = WhisperFactory.FromPath(modelPath);
-                processor = factory.CreateBuilder().WithLanguage("auto").WithNoContext()
-                    .WithPrompt("以下是微信聊天语音，请使用简体中文记录中文内容，保留原文语言。")
-                    .WithThreads(Math.Clamp(Environment.ProcessorCount / 2, 1, 8)).Build();
+                // One model, separate processors and native inference states for concurrent recordings.
+                // Keep string pooling disabled: Whisper's optional shared pool is not thread safe.
+                lock (builderLock)
+                {
+                    processor = factory.Value.CreateBuilder().WithLanguage("auto").WithNoContext()
+                        .WithPrompt("以下是微信聊天语音，请使用简体中文记录中文内容，保留原文语言。")
+                        .WithThreads(Math.Clamp(Environment.ProcessorCount / Math.Clamp(parallelism, 1, 8), 1, 8)).Build();
+                    Interlocked.Increment(ref createdProcessors);
+                }
             }
             var text = Collect(processor, samples).GetAwaiter().GetResult();
             return text.Length == 0 ? new(null, "未识别到文字，请收听原音核对") : new(text, "已离线转写，识别内容请结合原音核对");
@@ -40,10 +58,14 @@ internal sealed class OfflineTranscriber(string modelPath) : IDisposable
         catch (Exception ex) when (ex is InvalidDataException or IOException) { return new(null, "音频格式不支持、文件不可读或模型校验失败，请检查模型并收听原音"); }
         catch (Exception)
         {
-            failure = "离线识别组件不可用，请检查模型、Windows 11 和 VC++ 2022 x64 运行库";
-            return new(null, failure);
+            return new(null, "离线识别组件不可用或识别失败，请检查模型、Windows 11 和 VC++ 2022 x64 运行库");
         }
-        finally { if (samples != null) CryptographicOperations.ZeroMemory(MemoryMarshal.AsBytes(samples.AsSpan())); }
+        finally
+        {
+            if (samples != null) CryptographicOperations.ZeroMemory(MemoryMarshal.AsBytes(samples.AsSpan()));
+            if (processor != null) processors.Add(processor);
+            slots.Release();
+        }
     }
 
     private static async Task<string> Collect(WhisperProcessor processor, float[] samples)
@@ -97,5 +119,11 @@ internal sealed class OfflineTranscriber(string modelPath) : IDisposable
     }
 
     internal static bool HasSpeechEnergy(float[] samples) => samples.Length >= 1600 && samples.Any(s => Math.Abs(s) > .003f);
-    public void Dispose() { processor?.Dispose(); factory?.Dispose(); }
+    // The export joins all workers before disposing the pool and its shared model.
+    public void Dispose()
+    {
+        while (processors.TryTake(out var processor)) processor.Dispose();
+        if (factory.IsValueCreated) factory.Value.Dispose();
+        slots.Dispose();
+    }
 }

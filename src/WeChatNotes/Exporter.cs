@@ -8,13 +8,13 @@ public static class Exporter
 {
     public static void Export(Store store, string folder, string? targetId = null, IProgress<ExportProgress>? progress = null, VoiceTranscriptionOptions? transcription = null)
     {
-        using var engine = transcription == null ? null : new OfflineTranscriber(transcription.ModelPath);
-        Export(store, folder, targetId, null, progress, engine == null ? null : engine.Transcribe);
+        using var engine = transcription == null ? null : new OfflineTranscriber(transcription.ModelPath, transcription.Parallelism);
+        Export(store, folder, targetId, null, progress, engine == null ? null : engine.Transcribe, transcription?.Parallelism ?? 4);
     }
 
     internal static void Export(Store store, string folder, string? targetId,
         Func<string, IReadOnlyList<CaptureRecord>, Dictionary<string, VoicePayload>>? readVoices, IProgress<ExportProgress>? progress = null,
-        Func<string, VoiceTranscript>? transcribe = null)
+        Func<string, VoiceTranscript>? transcribe = null, int transcriptionParallelism = 4)
     {
         var updates = new ExportProgressReporter(progress);
         updates.Report(new("准备导出记录"));
@@ -43,17 +43,22 @@ public static class Exporter
         if (transcribe != null)
         {
             completed = 0; updates.Report(new("离线语音转文字", 0, voices.Count));
-            foreach (var (id, voice) in voices)
+            var entries = voices.ToArray();
+            var results = new VoiceTranscript[entries.Length];
+            var progressLock = new object();
+            Parallel.For(0, entries.Length, new ParallelOptions { MaxDegreeOfParallelism = Math.Clamp(transcriptionParallelism, 1, 8) }, i =>
             {
-                if (voice.RelativePath is not { } path) transcripts[id] = new(null, "本地音频未导出，无法转写");
-                else if (!Path.GetExtension(path).Equals(".wav", StringComparison.OrdinalIgnoreCase)) transcripts[id] = new(null, "当前音频未转换为 WAV，请收听原音");
+                var voice = entries[i].Value;
+                if (voice.RelativePath is not { } path) results[i] = new(null, "本地音频未导出，无法转写");
+                else if (!Path.GetExtension(path).Equals(".wav", StringComparison.OrdinalIgnoreCase)) results[i] = new(null, "当前音频未转换为 WAV，请收听原音");
                 else
                 {
-                    try { transcripts[id] = transcribe(Path.Combine(folder, path)); }
-                    catch (Exception) { transcripts[id] = new(null, "语音识别失败，请收听原音后重试"); }
+                    try { results[i] = transcribe(Path.Combine(folder, path)); }
+                    catch (Exception) { results[i] = new(null, "语音识别失败，请收听原音后重试"); }
                 }
-                updates.Report(new("离线语音转文字", ++completed, voices.Count));
-            }
+                lock (progressLock) updates.Report(new("离线语音转文字", ++completed, voices.Count));
+            });
+            for (int i = 0; i < entries.Length; i++) transcripts[entries[i].Key] = results[i];
         }
         var utf8 = new UTF8Encoding(true);
         completed = 0; updates.Report(new("写入聊天记录", 0, captures.Count));

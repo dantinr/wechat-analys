@@ -15,14 +15,15 @@ internal static class TranscriptionSelfTest
         using var store = new Store(Path.Combine(root, "speech-model-integration"));
         store.SaveTarget(new("speech", "合成识别群", "", 0, 0, 0, 0, 0, 0, Path.Combine(root, "synthetic-speech-account", "db_storage"), "speech@chatroom"));
         var time = new DateTimeOffset(2026, 10, 24, 10, 0, 0, TimeSpan.FromHours(8));
-        store.AddMessages([new("speech", "speech", "合成识别群", time, "<msg><voicemsg/></msg>", "", "", "合成TTS音频",
-            new("message_0.db", 1, 1, "synthetic", "合成发送人", time, 34, "合成语音原文"))]);
+        store.AddMessages(Enumerable.Range(1, 4).Select(i => new CaptureRecord("speech" + i, "speech", "合成识别群", time, "<msg><voicemsg/></msg>", "", "", "合成TTS音频",
+            new("message_0.db", i, i, "synthetic", "合成发送人", time.AddSeconds(i), 34, "合成语音原文"))).ToArray());
         SpeechModel.SavePath(store.Root, modelPath);
         using var engine = new OfflineTranscriber(SpeechModel.PathFor(store.Root));
         string folder = Path.Combine(root, "speech-model-export");
-        Exporter.Export(store, folder, "speech", (_, _) => new() { ["speech"] = new(File.ReadAllBytes(syntheticWave), "合成TTS") }, null, engine.Transcribe);
-        var exported = JsonSerializer.Deserialize<CaptureRecord>(File.ReadAllText(Path.Combine(folder, "聊天记录.jsonl")))!;
-        check("真实离线模型识别合成语音并通过发布版本导出为聊天文字", exported.VoiceTranscription?.Text is { Length: > 2 } && exported.Message!.RawContent == "合成语音原文" && File.ReadAllText(Path.Combine(folder, "对话内容.md")).Contains("〔语音转写〕"));
+        Exporter.Export(store, folder, "speech", (_, records) => records.ToDictionary(r => r.Id, _ => new VoicePayload(File.ReadAllBytes(syntheticWave), "合成TTS")), null, engine.Transcribe);
+        var exported = File.ReadAllLines(Path.Combine(folder, "聊天记录.jsonl")).Select(line => JsonSerializer.Deserialize<CaptureRecord>(line)!).ToArray();
+        check("真实离线模型识别合成语音并通过发布版本导出为聊天文字", exported.Length == 4 && exported.All(r => r.VoiceTranscription?.Text is { Length: > 2 } && r.Message!.RawContent == "合成语音原文") && File.ReadAllText(Path.Combine(folder, "对话内容.md")).Contains("〔语音转写〕"));
+        check("真实模型四路并行使用独立识别器且没有串文", engine.CreatedProcessors == 4 && exported.Select(r => r.VoiceTranscription!.Text).Distinct().Count() == 1);
         using var dialog = new SpeechModelDialog(store.Root) { Opacity = 0, ShowInTaskbar = false };
         var save = Descendants(dialog).OfType<Button>().Single(b => b.Text == "保存并使用");
         using var timeout = new System.Windows.Forms.Timer { Interval = 100 };
@@ -129,7 +130,7 @@ internal static class TranscriptionSelfTest
         string text = "=合成转写\n<script>明天下午三点开会。</script>"; int calls = 0;
         VoiceTranscript Transcribe(string path)
         {
-            calls++;
+            Interlocked.Increment(ref calls);
             if (OfflineTranscriber.ReadSamples(path)[0] < 0) throw new IOException("synthetic-private-diagnostic");
             return new(text, "已离线转写");
         }
@@ -144,5 +145,49 @@ internal static class TranscriptionSelfTest
         check("单条识别失败或缺失音频不会中断其他聊天导出", calls == 2 && dialogue.Contains("语音识别失败") && dialogue.Contains("本地音频未导出") && dialogue.Contains("合成文字") && !dialogue.Contains("synthetic-private-diagnostic"));
         check("转写按语音条数报告进度并在文档完成后结束", updates.Any(p => p.Stage == "离线语音转文字" && p.Completed == 3 && p.Total == 3) && updates.Last().Stage == "导出完成");
         check("导出转写不修改已采集的数据库原文", store.Captures().All(c => c.VoiceTranscription == null && c.Message?.RawContent == "原始消息XML"));
+        RunParallel(data, Wave(16384), check);
+    }
+
+    private static void RunParallel(string root, byte[] wave, Action<string, bool> check)
+    {
+        using var store = new Store(Path.Combine(root, "parallel-store"));
+        store.SaveTarget(new("parallel", "并行合成群", "", 0, 0, 0, 0, 0, 0, Path.Combine(root, "parallel-account", "db_storage"), "parallel@chatroom"));
+        var time = new DateTimeOffset(2026, 10, 24, 11, 0, 0, TimeSpan.FromHours(8));
+        store.AddMessages(Enumerable.Range(1, 8).Select(i => new CaptureRecord("parallel" + i, "parallel", "并行合成群", time, "<msg><voicemsg/></msg>", "", "", "合成测试",
+            new("message_0.db", i, i, "sender", "发送人", time.AddSeconds(i), 34, "原文"))).ToArray());
+        Dictionary<string, VoicePayload> Read(string _, IReadOnlyList<CaptureRecord> records) => records.ToDictionary(r => r.Id, _ => new VoicePayload(wave.ToArray(), "合成WAV"));
+        var progress = new List<ExportProgress>();
+        using var firstFour = new CountdownEvent(4);
+        int active = 0, peak = 0, calls = 0; bool rendezvous = true;
+        var sync = new object();
+        VoiceTranscript Transcribe(string path)
+        {
+            lock (sync) peak = Math.Max(peak, ++active);
+            try
+            {
+                if (Interlocked.Increment(ref calls) <= 4) { firstFour.Signal(); if (!firstFour.Wait(TimeSpan.FromSeconds(15))) rendezvous = false; }
+                int index = int.Parse(Path.GetFileNameWithoutExtension(path)[^2..]);
+                Thread.Sleep((9 - index) * 10);
+                if (index == 3) throw new IOException("synthetic-private-parallel-error");
+                return new("转写" + index, "已离线转写");
+            }
+            finally { lock (sync) active--; }
+        }
+        string folder = Path.Combine(root, "parallel-export");
+        Exporter.Export(store, folder, "parallel", Read, new Observer(progress.Add), Transcribe);
+        var records = File.ReadAllLines(Path.Combine(folder, "聊天记录.jsonl")).Select(line => JsonSerializer.Deserialize<CaptureRecord>(line)!).ToArray();
+        check("默认四路同时转写且不超过并发上限", new VoiceTranscriptionOptions("model").Parallelism == 4 && rendezvous && peak == 4 && calls == 8 && active == 0);
+        check("并行完成顺序不影响消息归属或导出记录顺序", records.Select(r => r.Id).SequenceEqual(store.Captures(targetId: "parallel").Select(r => r.Id)) && records.All(r => r.Id == "parallel3" ? r.VoiceTranscription?.Text == null : r.VoiceTranscription?.Text == "转写" + r.Message!.LocalId));
+        check("单路失败后其余转写正常完成且隐藏内部异常", records.Count(r => r.VoiceTranscription?.Text != null) == 7 && records.Single(r => r.Id == "parallel3").VoiceTranscription!.Status.Contains("语音识别失败") && !File.ReadAllText(Path.Combine(folder, "聊天记录.html")).Contains("synthetic-private-parallel-error"));
+        var counts = progress.Where(p => p.Stage == "离线语音转文字").Select(p => p.Completed).ToArray();
+        check("并发进度按完成条数单调增加并在全部结果落盘后结束", counts.First() == 0 && counts.Last() == 8 && counts.SequenceEqual(counts.Order()) && progress.Last().Stage == "导出完成");
+
+        active = 0; peak = 0;
+        VoiceTranscript Serial(string path) { lock (sync) peak = Math.Max(peak, ++active); Thread.Sleep(5); lock (sync) active--; return new("单路结果", "已离线转写"); }
+        Exporter.Export(store, Path.Combine(root, "serial-export"), "parallel", Read, null, Serial, 1);
+        check("可切换单路转写并限制异常配置范围", peak == 1 && new VoiceTranscriptionOptions("model", 0).Parallelism == 1 && new VoiceTranscriptionOptions("model", 99).Parallelism == 8);
+        using var form = new MainForm(store) { Opacity = 0, ShowInTaskbar = false };
+        var control = Descendants(form).OfType<NumericUpDown>().Single(c => c.AccessibleName == "语音转写并发数");
+        check("主界面默认四路并支持调整一至八路", control.Value == 4 && control.Minimum == 1 && control.Maximum == 8);
     }
 }
