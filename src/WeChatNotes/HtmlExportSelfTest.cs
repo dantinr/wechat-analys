@@ -14,7 +14,7 @@ internal static class HtmlExportSelfTest
     internal static void Run(string root, string report, Action<string, bool> check)
     {
         using var store = new Store(Path.Combine(root, "html-store"));
-        string account = Path.Combine(root, "html-account"), source = Path.Combine(account, "db_storage");
+        string account = Path.Combine(root, "synthetic-周宁_123abc"), source = Path.Combine(account, "db_storage");
         string local = Path.Combine(account, "msg", "file"); Directory.CreateDirectory(local);
         store.SaveTarget(new("html", "产品讨论 · 合成演示", "", 0, 0, 0, 0, 0, 0, source, "synthetic@chatroom"));
         var time = new DateTimeOffset(2026, 10, 24, 9, 0, 0, TimeSpan.FromHours(8));
@@ -51,6 +51,7 @@ internal static class HtmlExportSelfTest
             new Observer(progress.Add), _ => new("明天下午三点开会，请把聊天记录整理好。", "已离线转写"));
         string html = File.ReadAllText(Path.Combine(folder, "聊天记录.html"));
         string decoded = WebUtility.HtmlDecode(html);
+        check("HTML依据来源账号默认左右排列并预选自动识别且不依赖脚本初始化", Regex.Matches(html, "<article class=\"record self\"").Count == 2 && Regex.Matches(html, "data-own=\"true\"").Count == 2 && html.Contains("<option value=\"__auto\" selected>自动识别</option>"));
         check("HTML随聊天导出并按发送时间排列且隔离其他会话", Regex.Matches(html, "<article ").Count == 57 && decoded.IndexOf("早上好", StringComparison.Ordinal) < decoded.IndexOf("好的，已经确认", StringComparison.Ordinal) && !html.Contains("其他会话不应导出"));
         check("HTML将正文发送人来源与备注作为纯文字阻止脚本及属性注入", decoded.Contains(hostile) && !html.Contains("<img src=x") && !html.Contains("<script>window.exportInjected") && html.Contains("Content-Security-Policy"));
         string moved = Path.Combine(root, "移动后的中文目录 #100%"); Directory.Move(folder, moved);
@@ -66,6 +67,21 @@ internal static class HtmlExportSelfTest
         try { Exporter.Export(store, failed, "absent", new Observer(progress.Add)); }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { rejected = true; }
         check("HTML写入失败不会误报整体导出完成", rejected && progress.All(p => p.Stage != "导出完成"));
+        var identityRecords = new[]
+        {
+            Record("identity-a", "合成", 0) with { TargetId = "a", Message = Record("identity-a", "合成", 0).Message! with { SenderId = "wxid_one", Sender = "同名用户" } },
+            Record("identity-b", "合成", 0) with { TargetId = "b", Message = Record("identity-b", "合成", 0).Message! with { SenderId = "custom_account", Sender = "同名用户" } },
+            Record("identity-legacy", "合成", 0) with { TargetId = "legacy" }
+        };
+        var identityRoots = new Dictionary<string, string>
+        {
+            ["a"] = Path.Combine(root, "wxid_one_123abc", "db_storage"),
+            ["b"] = Path.Combine(root, "custom_account", "db_storage")
+        };
+        var owners = HtmlExporter.FindOwnSenders(identityRecords, identityRoots);
+        check("HTML本人身份按会话隔离并兼容存储后缀和自定义账号且不使用昵称匹配", owners.Count == 2 && owners["a"] == "id:wxid_one" && owners["b"] == "id:custom_account");
+        var ambiguous = identityRecords.Append(identityRecords[0] with { Id = "ambiguous", Message = identityRecords[0].Message! with { SenderId = "wxid_one_123abc" } }).ToArray();
+        check("HTML来源账号不明或存在多个精确候选时保留手动选择而不猜测左右", !HtmlExporter.FindOwnSenders(ambiguous, identityRoots).ContainsKey("a") && !owners.ContainsKey("legacy") && HtmlExporter.FindOwnSenders(identityRecords, new Dictionary<string, string> { ["a"] = "\0" }).Count == 0);
         // Keep a self-contained, synthetic archive next to the report for file:// browser verification.
         string preview = Path.Combine(Path.GetDirectoryName(report)!, Path.GetFileNameWithoutExtension(report) + "-html");
         foreach (string file in Directory.EnumerateFiles(moved, "*", SearchOption.AllDirectories))

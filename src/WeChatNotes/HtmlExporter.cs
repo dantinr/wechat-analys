@@ -1,6 +1,7 @@
 using System.Net;
 using System.Text;
 using System.Globalization;
+using System.Text.RegularExpressions;
 
 namespace WeChatNotes;
 
@@ -9,13 +10,14 @@ internal static class HtmlExporter
     internal static void Write(string folder, IReadOnlyList<CaptureRecord> captures,
         IReadOnlyDictionary<string, ReadableMessage> content, IReadOnlyDictionary<string, ExportedAttachment> attachments,
         IReadOnlyDictionary<string, ExportedVoice> voices, IReadOnlyDictionary<string, VoiceTranscript> transcripts,
-        IProgress<ExportProgress> progress)
+        IReadOnlyDictionary<string, string> sourceRoots, IProgress<ExportProgress> progress)
     {
         using var html = new StreamWriter(Path.Combine(folder, "聊天记录.html"), false, new UTF8Encoding(false));
         html.WriteLine(Head);
         string title = captures.Select(c => c.TargetName).Distinct(StringComparer.Ordinal).Take(2).ToArray() is [var name] ? name : "聊天记录";
         var senders = captures.OrderBy(c => c.Message?.SentAt ?? c.ObservedAt).Where(c => c.Message != null).Select(c => (Key: SenderKey(c), Name: c.Message!.DisplaySender)).DistinctBy(s => s.Key).ToArray();
         var avatars = senders.Select((s, i) => (s.Key, Color: i % 6)).ToDictionary(s => s.Key, s => s.Color, StringComparer.Ordinal);
+        var ownSenders = FindOwnSenders(captures, sourceRoots);
         html.WriteLine("""
             <div class=window><aside class=rail aria-label="档案导航"><div class=brand title=Ripper>R</div>
             <a class=rail-chat href="#records" aria-label="聊天记录"><svg viewBox="0 0 24 24" aria-hidden=true><path d="M4 4h16v12H9l-5 4V4Z"/><path d="M8 9h8M8 12h5"/></svg></a>
@@ -27,8 +29,9 @@ internal static class HtmlExporter
         html.WriteLine($"<header class=chat-header><div><h1>{H(title)}</h1><p>聊天记录 · 共 {captures.Count:N0} 条记录</p></div>");
         html.WriteLine("""
             <details class=export-menu id=export-files><summary>导出文件 <span aria-hidden=true>⌄</span></summary><nav class=downloads aria-label="导出文件"><a href="对话内容.md" target=_blank rel=noopener>对话 Markdown ↗</a><a href="聊天记录.md" target=_blank rel=noopener>原文 Markdown ↗</a><a href="聊天记录.csv" target=_blank rel=noopener>CSV 表格 ↗</a><a href="聊天记录.jsonl" target=_blank rel=noopener>JSONL 数据 ↗</a><a href="使用说明.txt" target=_blank rel=noopener>使用说明 ↗</a><p>“定位文件”打开附件所在目录；浏览器不支持时，可展开文件路径在导出目录查找。</p></nav></details></header>
-            <section class=tools aria-label="查找记录"><label class=search><span class=sr-only>搜索记录</span><svg viewBox="0 0 24 24" aria-hidden=true><circle cx="10" cy="10" r="6"/><path d="m15 15 5 5"/></svg><input id=search type=search placeholder="搜索内容、发送人、文件名…" autocomplete=off></label><label><span class=sr-only>显示</span><select id=kind><option value=all>全部记录</option><option value=file>文件附件</option><option value=voice>语音消息</option></select></label><label class=self-label>本人<select id=self title="选择自己的发送人后，对应消息显示在右侧"><option value="">未指定</option>
+            <section class=tools aria-label="查找记录"><label class=search><span class=sr-only>搜索记录</span><svg viewBox="0 0 24 24" aria-hidden=true><circle cx="10" cy="10" r="6"/><path d="m15 15 5 5"/></svg><input id=search type=search placeholder="搜索内容、发送人、文件名…" autocomplete=off></label><label><span class=sr-only>显示</span><select id=kind><option value=all>全部记录</option><option value=file>文件附件</option><option value=voice>语音消息</option></select></label><label class=self-label>本人<select id=self title="自动识别来源账号的本人消息，可手动更改右侧发送人"><option value="">未指定</option>
             """);
+        if (ownSenders.Count > 0) html.WriteLine("<option value=\"__auto\" selected>自动识别</option>");
         foreach (var sender in senders) html.WriteLine($"<option value=\"{H(sender.Key)}\">{H(sender.Name)}</option>");
         html.WriteLine("""
             </select></label></section><p id=result role=status aria-live=polite></p><div class=thread>
@@ -47,9 +50,10 @@ internal static class HtmlExporter
             string sender = message?.DisplaySender ?? "旧版 OCR（发送人待核对）";
             var time = (message?.SentAt ?? capture.ObservedAt).ToOffset(TimeSpan.FromHours(8));
             string senderKey = SenderKey(capture);
+            bool own = ownSenders.TryGetValue(capture.TargetId, out string? owner) && senderKey == owner;
             string initial = string.IsNullOrWhiteSpace(sender) ? "?" : StringInfo.GetNextTextElement(sender.Trim());
             // Chat text is always encoded markup, never executable HTML or JavaScript.
-            html.WriteLine($"<article class=record id=\"record-{number}\" data-kind=\"{kind}\" data-sender=\"{H(senderKey)}\" data-time=\"{time.ToUnixTimeSeconds()}\"><time class=message-time>{(message == null ? "记录于 " : "")}{time:yyyy-MM-dd HH:mm:ss}</time><div class=message-row><div class=\"avatar avatar-{avatars.GetValueOrDefault(senderKey)}\" aria-hidden=true>{H(initial)}</div><div class=message-main><div class=sender-row><strong title=\"{H(sender)}\">{H(sender)}</strong><span class=number>#{number:D4}</span></div><div class=bubble>");
+            html.WriteLine($"<article class=\"record{(own ? " self" : "")}\" id=\"record-{number}\" data-kind=\"{kind}\" data-sender=\"{H(senderKey)}\" data-own=\"{(own ? "true" : "false")}\" data-time=\"{time.ToUnixTimeSeconds()}\"><time class=message-time>{(message == null ? "记录于 " : "")}{time:yyyy-MM-dd HH:mm:ss}</time><div class=message-row><div class=\"avatar avatar-{avatars.GetValueOrDefault(senderKey)}\" aria-hidden=true>{H(initial)}</div><div class=message-main><div class=sender-row><strong title=\"{H(sender)}\">{H(sender)}</strong><span class=number>#{number:D4}</span></div><div class=bubble>");
             if (attachment == null && voice == null) html.WriteLine($"<div class=body>{H(content[capture.Id].Text)}</div>");
             if (attachment != null)
             {
@@ -80,7 +84,10 @@ internal static class HtmlExporter
         }
         html.WriteLine("""
             </div><p id=empty class=notice hidden>没有匹配的记录。</p></div><nav class=pager aria-label="记录分页" hidden><button id=prev type=button>← 上一页</button><span id=page aria-live=polite></span><button id=next type=button>下一页 →</button></nav>
-            <footer>离线聊天档案 · 选择“本人”可将自己的消息显示在右侧 · 语音转写请结合原音核对</footer></main></div>
+            """);
+        string alignment = ownSenders.Count > 0 ? "已识别本人：本人消息在右侧，其他消息在左侧" : "未识别本人，请通过上方“本人”选择右侧发送人";
+        html.WriteLine($"<footer>{H(alignment)} · 语音转写请结合原音核对</footer></main></div>");
+        html.WriteLine("""
             <script>
             (() => {
               'use strict';
@@ -115,7 +122,7 @@ internal static class HtmlExporter
                 current = 0; render();
               }
               search.addEventListener('input', filter); kind.addEventListener('change', filter);
-              self.addEventListener('change', () => records.forEach(r => r.classList.toggle('self', self.value !== '' && r.dataset.sender === self.value)));
+              self.addEventListener('change', () => records.forEach(r => r.classList.toggle('self', self.value === '__auto' ? r.dataset.own === 'true' : self.value !== '' && r.dataset.sender === self.value)));
               document.querySelector('.rail a[href="#export-files"]').addEventListener('click', () => { document.getElementById('export-files').open = true; });
               function move(delta) { current += delta; render(); document.querySelector('.thread').scrollTop = 0; }
               prev.addEventListener('click', () => move(-1)); next.addEventListener('click', () => move(1));
@@ -133,6 +140,30 @@ internal static class HtmlExporter
 
     private static string SenderKey(CaptureRecord capture) => !string.IsNullOrWhiteSpace(capture.Message?.SenderId)
         ? "id:" + capture.Message.SenderId : "name:" + (capture.Message?.DisplaySender ?? "旧版 OCR");
+
+    internal static Dictionary<string, string> FindOwnSenders(IReadOnlyList<CaptureRecord> captures, IReadOnlyDictionary<string, string> sourceRoots)
+    {
+        var owners = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var conversation in captures.GroupBy(c => c.TargetId, StringComparer.Ordinal))
+        {
+            if (!sourceRoots.TryGetValue(conversation.Key, out string? root)) continue;
+            try
+            {
+                string storage = Path.TrimEndingDirectorySeparator(Path.GetFullPath(root));
+                if (!Path.GetFileName(storage).Equals("db_storage", StringComparison.OrdinalIgnoreCase)) continue;
+                string? account = Directory.GetParent(storage)?.Name;
+                if (string.IsNullOrEmpty(account)) continue;
+                var candidates = new HashSet<string>(StringComparer.Ordinal) { account };
+                var suffix = Regex.Match(account, @"^(.+)_([a-zA-Z0-9]{4,8})$", RegexOptions.CultureInvariant);
+                if (suffix.Success) candidates.Add(suffix.Groups[1].Value);
+                var matches = conversation.Select(c => c.Message?.SenderId).Where(id => id != null && candidates.Contains(id)).Distinct(StringComparer.Ordinal).ToArray();
+                // Identify by the account username only; display names can be shared by different people.
+                if (matches.Length == 1) owners[conversation.Key] = "id:" + matches[0];
+            }
+            catch (Exception ex) when (ex is ArgumentException or NotSupportedException or IOException) { }
+        }
+        return owners;
+    }
 
     private static string H(string value) => WebUtility.HtmlEncode(value);
     // Only generated export paths reach this function. Encode each segment, including #, %, and spaces.

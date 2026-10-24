@@ -108,7 +108,7 @@ public static class Exporter
                 updates.Report(new("生成对话文档", ++completed, captures.Count));
             }
         }
-        HtmlExporter.Write(folder, captures, content, attachments, voices, transcripts, updates);
+        HtmlExporter.Write(folder, captures, content, attachments, voices, transcripts, store.TargetSources(), updates);
         File.WriteAllText(Path.Combine(folder, "使用说明.txt"), "本目录为Ripper的本地导出。\n聊天记录.html：双击在浏览器离线查看，支持搜索、分页、语音播放、原文来源及本地附件入口；“定位文件”打开附件所在目录，若浏览器不支持可按显示的相对路径查找。请完整保留导出目录以维持附件链接。\n对话内容.md：按发送时间排序的“发送人：对话内容 + 时间”，文件和语音消息附带本地链接或未导出说明。\n聊天记录.md：消息原文、发送人、发送时间和来源编号。\n聊天记录.csv：适合表格软件，包含语音文件相对路径、导出状态和原始语音路径。\n聊天记录.jsonl：每行一条完整记录，Message.RawContent 保留数据库原始正文。\n附件/：已下载并匹配的文件附件，保留原始文件名；不同消息分目录保存，避免同名文件覆盖。\n语音/：按会话、消息编号及发送时间匹配的本地原始音频，不同消息分目录保存；SILK 自动转换为 24 kHz、单声道、16 位 PCM WAV，可用常见播放器打开，同时保留 .silk 原文件；转换失败时保留原文件并注明原因。启用离线语音识别后，识别文字以“语音转写”标注并与原音链接一并导出；CSV 增加转写文字、状态和模型，JSONL 的 VoiceTranscription 保存识别结果，原文保持不变。自动识别可能有误，请结合原音核对。未识别的音频格式按 .bin 原样保存。\n只包含本机已同步、选定会话及导入范围内的消息。未找到的文件或语音在对话内容中明确标注；请保持微信登录，先在微信下载或加载后重新导出。图片和视频不提取原文件。旧版 OCR 记录有明确标记。\n", utf8);
         updates.Report(new("导出完成", 1, 1));
     }
