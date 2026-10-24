@@ -23,7 +23,7 @@ internal static class ExportProgressSelfTest
             if (p.Stage == "导出完成") filesReadyAtCompletion = File.ReadAllLines(Path.Combine(folder, "聊天记录.jsonl")).Length == 503 && File.ReadAllText(Path.Combine(folder, "使用说明.txt")).Length > 0;
         });
         Exporter.Export(store, folder, "progress", (_, selected) => selected.ToDictionary(c => c.Id, _ => new VoicePayload([1, 2, 3], "合成音频")), progress);
-        check("导出按真实步骤报告附件语音和文档进度", new[] { "整理消息内容", "导出文件附件", "读取本地语音库", "导出语音", "写入聊天记录", "生成对话文档" }.All(stage => updates.Any(p => p.Stage == stage)));
+        check("导出按真实步骤报告附件语音和文档进度", new[] { "整理消息内容", "导出文件附件", "读取本地语音库", "导出语音", "写入聊天记录", "生成对话文档", "生成 HTML 聊天目录" }.All(stage => updates.Any(p => p.Stage == stage)));
         check("进度数量有效且完成通知发生在文件写出之后", filesReadyAtCompletion && updates.Last() is { Stage: "导出完成", Percent: 100 } && updates.All(p => p.Completed >= 0 && (p.Total == 0 || p.Completed <= p.Total)) && updates.Where(p => p.Total > 0).GroupBy(p => p.Stage).All(g => g.Last().Percent == 100) && updates.All(p => !p.Stage.Contains("合成正文")));
 
         string failed = Path.Combine(root, "export-progress-failed"); Directory.CreateDirectory(Path.Combine(failed, "使用说明.txt"));
@@ -38,30 +38,6 @@ internal static class ExportProgressSelfTest
         Exporter.Export(store, Path.Combine(root, "export-progress-empty"), "empty", new Observer(emptyUpdates.Add));
         check("空会话导出进度不会除零或卡住", emptyUpdates.Last() is { Stage: "导出完成", Percent: 100 });
 
-        using (var rendered = new ManualResetEventSlim())
-        using (var preview = new ExportProgressDialog(_ => rendered.Wait(TimeSpan.FromSeconds(10))) { Opacity = 0 })
-        {
-            preview.Shown += async (_, _) =>
-            {
-                try
-                {
-                    preview.SetProgress(new("写入聊天记录", 250, 1000));
-                    await Task.Delay(500); preview.PerformLayout();
-                    var bar = preview.Controls[0].Controls.OfType<ProgressBar>().Single();
-                    bool exact = bar.Style == ProgressBarStyle.Continuous && bar.Value == 25;
-                    using var bitmap = new Bitmap(preview.Width, preview.Height); preview.DrawToBitmap(bitmap, new Rectangle(Point.Empty, preview.Size));
-                    bitmap.Save(Path.Combine(Path.GetDirectoryName(report)!, Path.GetFileNameWithoutExtension(report) + "-export-progress.png"));
-                    preview.SetProgress(new("读取本地语音库"));
-                    check("已知数量显示百分比未知数量切换滚动进度", exact && bar.Style == ProgressBarStyle.Marquee);
-                }
-                finally { rendered.Set(); }
-            };
-            preview.ShowDialog();
-        }
-        int uiThread = Environment.CurrentManagedThreadId; bool background = false;
-        using (var dialog = new ExportProgressDialog(p => { background = Environment.CurrentManagedThreadId != uiThread; p.Report(new("导出完成", 1, 1)); }) { Opacity = 0 })
-            check("进度窗口在后台执行任务并在成功后关闭", dialog.ShowDialog() == DialogResult.OK && background && dialog.Failure == null);
-        using (var dialog = new ExportProgressDialog(_ => throw new IOException("合成导出失败")) { Opacity = 0 })
-            check("导出异常会关闭进度窗口并返回失败", dialog.ShowDialog() == DialogResult.Abort && dialog.Failure is IOException);
+        BackgroundExportSelfTest.Run(root, report, check);
     }
 }

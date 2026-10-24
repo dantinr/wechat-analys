@@ -8,13 +8,20 @@ public sealed class Store : IDisposable
     public string Root { get; }
     private readonly SqliteConnection db;
 
-    public Store(string root)
+    public Store(string root) : this(root, false) { }
+
+    internal Store(string root, bool readOnly)
     {
         Root = Path.GetFullPath(root);
-        Directory.CreateDirectory(Root);
-        db = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = Path.Combine(Root, "records.sqlite3") }.ToString());
+        if (!readOnly) Directory.CreateDirectory(Root);
+        db = new SqliteConnection(new SqliteConnectionStringBuilder
+        {
+            DataSource = Path.Combine(Root, "records.sqlite3"),
+            Mode = readOnly ? SqliteOpenMode.ReadOnly : SqliteOpenMode.ReadWriteCreate
+        }.ToString());
         db.Open();
         db.CreateFunction<string, string, bool>("wechat_contains", (text, term) => text.Contains(term, StringComparison.OrdinalIgnoreCase), isDeterministic: true);
+        if (readOnly) return;
         using var command = db.CreateCommand();
         command.CommandText = """
             PRAGMA journal_mode=WAL;
@@ -33,6 +40,13 @@ public sealed class Store : IDisposable
     }
 
     public List<Target> Targets() => Read<Target>("SELECT json FROM targets ORDER BY rowid");
+    internal bool HasVoiceRecords(string targetId)
+    {
+        using var command = db.CreateCommand();
+        command.CommandText = "SELECT EXISTS(SELECT 1 FROM captures WHERE target_id=$target AND (json_extract(json,'$.Message.RawType') & 4294967295)=34)";
+        command.Parameters.AddWithValue("$target", targetId);
+        return (long)command.ExecuteScalar()! != 0;
+    }
     public List<CaptureRecord> Captures(int? limit = null, string? targetId = null)
     {
         string filter = targetId == null ? "" : " WHERE target_id=$target";
