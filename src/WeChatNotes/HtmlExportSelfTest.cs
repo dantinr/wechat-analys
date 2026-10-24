@@ -1,6 +1,7 @@
 using System.Buffers.Binary;
 using System.Net;
 using System.Text;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Xml.Linq;
 
@@ -58,6 +59,8 @@ internal static class HtmlExportSelfTest
         var links = Regex.Matches(html, "(?:href|src)=\"([^\"]+)\"").Select(m => WebUtility.HtmlDecode(m.Groups[1].Value)).Where(p => !p.StartsWith('#')).ToArray();
         check("HTML特殊字符文件和目录链接移动后仍有效且不依赖原机绝对路径", links.Length > 8 && links.All(p => File.Exists(Path.Combine(moved, Uri.UnescapeDataString(p))) || Directory.Exists(Path.Combine(moved, Uri.UnescapeDataString(p)))) && !html.Contains(root) && links.Any(p => p.Contains("%23") && p.Contains("%25")) && decoded.Contains(name));
         check("HTML提供文件定位相对路径及缺失附件说明", html.Contains("定位文件 ↗") && decoded.Contains("尚未下载的附件.txt") && html.Contains("附件未导出") && html.Contains("<code>附件/"));
+        var fileIndex = JsonSerializer.Deserialize<ExportFileIndex>(File.ReadAllText(Path.Combine(moved, ExportFileLocator.IndexName)))!;
+        check("HTML资源管理器链接使用可移动相对路径及导出索引并保留浏览目录", Guid.TryParseExact(fileIndex.Id, "N", out _) && fileIndex.Files.Length == 2 && fileIndex.Files.All(p => File.Exists(Path.Combine(moved, p))) && html.Contains("data-export-id=\"" + fileIndex.Id + "\"") && html.Contains("data-locate=\"") && html.Contains("ripper-locate://file/") && html.Contains("浏览目录 ↗") && !html.Contains(root));
         check("HTML支持本地音频播放转写并保留原文来源", html.Contains("<audio controls preload=none") && decoded.Contains("明天下午三点开会") && html.Contains("语音转写") && html.Contains("原文与来源") && store.Captures().All(c => c.VoiceTranscription == null));
         check("HTML全部写完后才报告导出完成并提供生成进度", progress.Any(p => p is { Stage: "生成 HTML 聊天目录", Completed: 57, Total: 57 }) && progress.Last().Stage == "导出完成" && html.EndsWith("</script></body></html>" + Environment.NewLine));
         string empty = Path.Combine(root, "html-empty"); Exporter.Export(store, empty, "absent");

@@ -168,6 +168,7 @@ internal static class RawSelfTest
             ExportDirectorySelfTest.Run(root, Check);
             AttachmentSelfTest.Run(root, Check);
             HtmlExportSelfTest.Run(root, report, Check);
+            ExportFileLocatorSelfTest.Run(root, Check);
             VoiceSelfTest.Run(root, Check);
             TranscriptionSelfTest.Run(root, Check);
             if (Environment.GetEnvironmentVariable("RIPPER_TEST_SPEECH_MODEL") is { Length: > 0 } speechModel &&

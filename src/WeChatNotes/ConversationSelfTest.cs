@@ -84,7 +84,7 @@ internal static class ConversationSelfTest
         string onlyB = Path.Combine(root, "current-b-export"); Exporter.Export(store, onlyB, "b");
         var bRecords = File.ReadLines(Path.Combine(onlyB, "聊天记录.jsonl")).Select(line => JsonSerializer.Deserialize<CaptureRecord>(line)!).ToList();
         check("当前会话导出包含超过 500 条的全部已采集历史", bRecords.Count > 500 && bRecords.Count == store.Captures(targetId: "b").Count && bRecords.All(c => c.TargetId == "b"));
-        check("导出仅生成HTML聊天目录聊天文档和使用说明且不再包含需求模块", new[] { onlyA, onlyB }.All(folder => Directory.GetFiles(folder).Select(Path.GetFileName).ToHashSet().SetEquals(["聊天记录.html", "聊天记录.jsonl", "聊天记录.csv", "聊天记录.md", "对话内容.md", "使用说明.txt"]) && !File.ReadAllText(Path.Combine(folder, "使用说明.txt")).Contains("需求整理")));
+        check("导出仅生成HTML聊天目录文档定位索引和使用说明且不再包含需求模块", new[] { onlyA, onlyB }.All(folder => Directory.GetFiles(folder).Select(Path.GetFileName).ToHashSet().SetEquals(["聊天记录.html", "聊天记录.jsonl", "聊天记录.csv", "聊天记录.md", "对话内容.md", "使用说明.txt", ExportFileLocator.IndexName]) && !File.ReadAllText(Path.Combine(folder, "使用说明.txt")).Contains("需求整理")));
         string emptyExport = Path.Combine(root, "empty-chat-export"); Exporter.Export(store, emptyExport, "no-messages");
         check("空会话导出不会回退到全部聊天或生成需求文档", !File.ReadLines(Path.Combine(emptyExport, "聊天记录.jsonl")).Any() && !File.ReadAllText(Path.Combine(emptyExport, "聊天记录.md")).Contains("record-a1") && !File.Exists(Path.Combine(emptyExport, "需求整理.md")));
         // Render only synthetic data, without opening or interacting with personal WeChat.

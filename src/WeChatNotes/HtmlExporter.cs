@@ -12,14 +12,17 @@ internal static class HtmlExporter
         IReadOnlyDictionary<string, ExportedVoice> voices, IReadOnlyDictionary<string, VoiceTranscript> transcripts,
         IReadOnlyDictionary<string, string> sourceRoots, IProgress<ExportProgress> progress)
     {
+        var index = ExportFileLocator.WriteIndex(folder, attachments.Values.Select(a => a.RelativePath)
+            .Concat(voices.Values.SelectMany(v => new[] { v.RelativePath, v.OriginalPath })));
         using var html = new StreamWriter(Path.Combine(folder, "聊天记录.html"), false, new UTF8Encoding(false));
         html.WriteLine(Head);
         string title = captures.Select(c => c.TargetName).Distinct(StringComparer.Ordinal).Take(2).ToArray() is [var name] ? name : "聊天记录";
         var senders = captures.OrderBy(c => c.Message?.SentAt ?? c.ObservedAt).Where(c => c.Message != null).Select(c => (Key: SenderKey(c), Name: c.Message!.DisplaySender)).DistinctBy(s => s.Key).ToArray();
         var avatars = senders.Select((s, i) => (s.Key, Color: i % 6)).ToDictionary(s => s.Key, s => s.Color, StringComparer.Ordinal);
         var ownSenders = FindOwnSenders(captures, sourceRoots);
+        html.WriteLine($"<div class=window data-export-id=\"{index.Id}\">");
         html.WriteLine("""
-            <div class=window><aside class=rail aria-label="档案导航"><div class=brand title=Ripper>R</div>
+            <aside class=rail aria-label="档案导航"><div class=brand title=Ripper>R</div>
             <a class=rail-chat href="#records" aria-label="聊天记录"><svg viewBox="0 0 24 24" aria-hidden=true><path d="M4 4h16v12H9l-5 4V4Z"/><path d="M8 9h8M8 12h5"/></svg></a>
             <a href="#export-files" aria-label="导出文件"><svg viewBox="0 0 24 24" aria-hidden=true><path d="M3 6h7l2 2h9v12H3V6Z"/></svg></a><span class=rail-bottom>本地</span></aside>
             <aside class=sidebar aria-label="会话信息"><div class=sidebar-title>聊天记录<span>离线档案</span></div>
@@ -28,7 +31,7 @@ internal static class HtmlExporter
         html.WriteLine("<div class=archive-facts><p class=section-label>档案信息</p><p>按消息发送时间排列<br>时区 UTC+08:00</p><p>附件和语音保存在此目录，<br>移动时请保留整个文件夹。</p></div><div class=sidebar-footer><strong>Ripper</strong><p>Free your conversations.<br>Own your records.</p><span>本地保存 · 离线阅读</span></div></aside><main class=chat>");
         html.WriteLine($"<header class=chat-header><div><h1>{H(title)}</h1><p>聊天记录 · 共 {captures.Count:N0} 条记录</p></div>");
         html.WriteLine("""
-            <details class=export-menu id=export-files><summary>导出文件 <span aria-hidden=true>⌄</span></summary><nav class=downloads aria-label="导出文件"><a href="对话内容.md" target=_blank rel=noopener>对话 Markdown ↗</a><a href="聊天记录.md" target=_blank rel=noopener>原文 Markdown ↗</a><a href="聊天记录.csv" target=_blank rel=noopener>CSV 表格 ↗</a><a href="聊天记录.jsonl" target=_blank rel=noopener>JSONL 数据 ↗</a><a href="使用说明.txt" target=_blank rel=noopener>使用说明 ↗</a><p>“定位文件”打开附件所在目录；浏览器不支持时，可展开文件路径在导出目录查找。</p></nav></details></header>
+            <details class=export-menu id=export-files><summary>导出文件 <span aria-hidden=true>⌄</span></summary><nav class=downloads aria-label="导出文件"><a href="对话内容.md" target=_blank rel=noopener>对话 Markdown ↗</a><a href="聊天记录.md" target=_blank rel=noopener>原文 Markdown ↗</a><a href="聊天记录.csv" target=_blank rel=noopener>CSV 表格 ↗</a><a href="聊天记录.jsonl" target=_blank rel=noopener>JSONL 数据 ↗</a><a href="使用说明.txt" target=_blank rel=noopener>使用说明 ↗</a><p>“定位文件”通过 Ripper 打开 Windows 文件夹并选中文件。首次使用请先运行新版 Ripper，浏览器询问时选择打开；也可使用“浏览目录”或展开文件路径查找。请保留 ripper-files.json 文件定位索引。</p></nav></details></header>
             <section class=tools aria-label="查找记录"><label class=search><span class=sr-only>搜索记录</span><svg viewBox="0 0 24 24" aria-hidden=true><circle cx="10" cy="10" r="6"/><path d="m15 15 5 5"/></svg><input id=search type=search placeholder="搜索内容、发送人、文件名…" autocomplete=off></label><label><span class=sr-only>显示</span><select id=kind><option value=all>全部记录</option><option value=file>文件附件</option><option value=voice>语音消息</option></select></label><label class=self-label>本人<select id=self title="自动识别来源账号的本人消息，可手动更改右侧发送人"><option value="">未指定</option>
             """);
         if (ownSenders.Count > 0) html.WriteLine("<option value=\"__auto\" selected>自动识别</option>");
@@ -91,6 +94,12 @@ internal static class HtmlExporter
             <script>
             (() => {
               'use strict';
+              const exportId = document.querySelector('[data-export-id]').dataset.exportId;
+              if (location.protocol === 'file:') document.querySelectorAll('a[data-locate]').forEach(link => {
+                const file = new URL(link.dataset.locate, location.href);
+                link.href = 'ripper-locate://file/' + exportId + '?path=' + encodeURIComponent(file.href);
+                link.removeAttribute('target');
+              });
               const records = Array.from(document.querySelectorAll('.record'));
               const search = document.getElementById('search'), kind = document.getElementById('kind'), self = document.getElementById('self');
               const prev = document.getElementById('prev'), next = document.getElementById('next');
@@ -135,7 +144,7 @@ internal static class HtmlExporter
     private static void WriteFile(TextWriter html, string path, string name, string label)
     {
         string directory = path[..(path.LastIndexOf('/') + 1)];
-        html.WriteLine($"<div class=file><div class=file-head><span class=file-icon aria-hidden=true>▤</span><div><strong>{H(name)}</strong><small>{H(label)} · 本地文件</small></div></div><div class=file-actions><a href=\"{Href(path)}\" target=_blank rel=noopener>打开文件 ↗</a><a href=\"{Href(directory)}\" target=_blank rel=noopener title=\"打开附件所在目录\">定位文件 ↗</a></div><details class=file-location><summary>文件路径</summary><code>{H(path)}</code></details></div>");
+        html.WriteLine($"<div class=file><div class=file-head><span class=file-icon aria-hidden=true>▤</span><div><strong>{H(name)}</strong><small>{H(label)} · 本地文件</small></div></div><div class=file-actions><a href=\"{Href(path)}\" target=_blank rel=noopener>打开文件 ↗</a><a data-locate=\"{Href(path)}\" href=\"{Href(directory)}\" target=_blank rel=noopener title=\"通过 Ripper 打开文件夹并选中文件\">定位文件 ↗</a><a href=\"{Href(directory)}\" target=_blank rel=noopener>浏览目录 ↗</a></div><details class=file-location><summary>文件路径</summary><code>{H(path)}</code></details></div>");
     }
 
     private static string SenderKey(CaptureRecord capture) => !string.IsNullOrWhiteSpace(capture.Message?.SenderId)
@@ -253,7 +262,7 @@ internal static class HtmlExporter
         .file-head strong { display: block; font-weight: 500; font-size: 13px; overflow-wrap: anywhere; }
         .file-head small { display: block; font-size: 10px; color: #999; margin-top: 4px; }
         .file-icon { display: grid; place-items: center; flex: 0 0 38px; height: 42px; font-size: 28px; background: #f0a854; color: #fff; border-radius: 3px; }
-        .file-actions { display: flex; gap: 22px; padding-top: 9px; border-top: 1px solid #0000000b; font-size: 11px; }
+        .file-actions { display: flex; flex-wrap: wrap; gap: 8px 22px; padding-top: 9px; border-top: 1px solid #0000000b; font-size: 11px; }
         .file-location { margin-top: 8px; font-size: 10px; color: #aaa; }
         summary { cursor: pointer; width: fit-content; }
         .file code { display: block; margin-top: 7px; font: 10px/1.7 Consolas, "Microsoft YaHei", monospace; color: #777; overflow-wrap: anywhere; white-space: pre-wrap; }
