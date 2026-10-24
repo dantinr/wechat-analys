@@ -60,6 +60,7 @@ foreach ($wechatNotesNotice in @('LICENSE', 'THIRD_PARTY_NOTICES.md', 'VERSION')
 $wechatNotesCodecNotices = Join-Path $wechatNotesOutput 'licenses'
 New-Item -ItemType Directory -Path $wechatNotesCodecNotices -Force | Out-Null
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'native/SILK-LICENSE.txt') -Destination (Join-Path $wechatNotesCodecNotices 'SILK-SDK.txt') -Force
+Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'native/speech-licenses') -Destination $wechatNotesCodecNotices -Recurse -Force
 $wechatNotesSource = Join-Path $wechatNotesOutput 'source'
 $wechatNotesSourceProject = Join-Path $wechatNotesSource 'src\WeChatNotes'
 New-Item -ItemType Directory -Path $wechatNotesSourceProject -Force | Out-Null

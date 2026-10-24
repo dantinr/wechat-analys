@@ -7,6 +7,7 @@ NuGet 依赖：
 - Microsoft.Data.Sqlite 10.0.11、SQLitePCLRaw：各自的 MIT / Apache-2.0 许可证及 SQLite public domain 条款，详见其 NuGet 包。
 - [ZstdSharp.Port 0.8.8](https://github.com/oleg-st/ZstdSharp)：MIT，Copyright (c) 2021 Oleg Stepanischev。下附许可证。
 - 独立 EXE 版本包含 .NET 和 Windows Desktop 运行环境，其对应许可证及第三方说明随包附在 `licenses/` 下。
+- [Whisper.net 1.9.1](https://github.com/sandrohanea/whisper.net) 及 CPU / NoAvx 运行库：MIT；底层 [whisper.cpp](https://github.com/ggml-org/whisper.cpp) / GGML 为 MIT。模型使用 [OpenAI Whisper](https://github.com/openai/whisper) Small 多语言权重（MIT），按需从 Hugging Face 下载，主站不可用时尝试 HF-Mirror 并核对固定 SHA256。许可证保存在 `native/speech-licenses/`，发布包附在 `licenses/speech-licenses/`。模型单独安装，不包含在程序发布包中。
 
 语音解码使用 Skype SILK SDK 1.0.9（Copyright (c) 2006–2012 Skype Limited），采用 SDK 各源文件中的 BSD 风格许可。源码来自 [DrAbcOfficial/SilkSharp 提交 3dbfc2bd](https://github.com/DrAbcOfficial/SilkSharp/tree/3dbfc2bd1b090094e221187c3a9d25583fa11916/silkcodec) 的 SDK 部分，保存在 `native/silk/`，保留各文件原有版权及许可。未使用其文件转换包装器或 NuGet 运行库。本项目的 `native/decoder.c` 内存解码包装器按 GPL-3.0-or-later 提供。发布包附完整构建源码 `source/native/`，SDK 许可另附在 `licenses/SILK-SDK.txt`；仓库副本为 `native/SILK-LICENSE.txt`。
 

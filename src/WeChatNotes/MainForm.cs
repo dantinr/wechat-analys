@@ -23,6 +23,7 @@ public sealed class MainForm : Form
     private readonly Button start;
     private readonly Button once;
     private readonly Button exportCurrent;
+    private readonly CheckBox transcribeVoices = new() { Text = "语音转文字（离线）", AutoSize = true, Checked = SpeechModel.Supported, Enabled = SpeechModel.Supported, Padding = new(8, 6, 0, 0) };
     private bool exporting;
     private bool closingConversation;
     private bool readingConversation;
@@ -50,7 +51,7 @@ public sealed class MainForm : Form
         toolbar.Controls.Add(new Label { Text = "间隔（秒）", AutoSize = true, Padding = new Padding(8, 8, 0, 0) }); toolbar.Controls.Add(interval);
         toolbar.Controls.Add(Button("打开数据目录", (_, _) => OpenFolder(store.Root)));
         toolbar.Controls.Add(Button("使用说明", (_, _) => MessageBox.Show(this,
-            "1. 保持 Windows 微信登录。\n2. 点击“添加会话”→“读取会话列表”，勾选群或联系人，可选择首次导入范围。\n3. 点击“开始记录”，默认每 30 秒同步一次。窗口可最小化，无需切换聊天。\n4. 选择会话和消息，查看原文及来源；文件消息可点击“定位文件”查找本机附件。\n5. 选择具体会话标签，点击“导出当前聊天记录”，生成该会话的 Markdown、CSV、JSONL，并导出本地文件附件和语音。\n\n通过只读连接本地聊天数据库获取原文，不使用 OCR。完整解密数据库只存在于内存中，只保存选定会话的消息。\n已下载的普通文件附件和本地原始语音可在导出时一并保存，并在 Markdown 中添加链接。SILK 语音自动转换为可播放的 WAV，同时保留原始文件，未转文字；导出语音时请保持微信登录。图片和视频仅保留文字说明 / XML。只读取已经同步到本机的消息。\n关闭程序、电脑休眠或微信退出期间停止同步；重启后点击开始可补采仍在本地的消息。\n微信升级可能需要适配。", "使用说明")));
+            "1. 保持 Windows 微信登录。\n2. 点击“添加会话”→“读取会话列表”，勾选群或联系人，可选择首次导入范围。\n3. 点击“开始记录”，默认每 30 秒同步一次。窗口可最小化，无需切换聊天。\n4. 选择会话和消息，查看原文及来源；文件消息可点击“定位文件”查找本机附件。\n5. 选择具体会话标签，点击“导出当前聊天记录”，生成该会话的 Markdown、CSV、JSONL，并导出本地文件附件和语音。\n\n通过只读连接本地聊天数据库获取原文，不使用 OCR。完整解密数据库只存在于内存中，只保存选定会话的消息。\n已下载的普通文件附件和本地原始语音可在导出时一并保存，并在 Markdown 中添加链接。SILK 语音自动转换为可播放的 WAV，同时保留原始文件；勾选“语音转文字（离线）”后，识别文字会随聊天记录导出，首次请在“语音模型设置”选择已有模型路径或自动下载模型；导出语音时请保持微信登录。图片和视频仅保留文字说明 / XML。只读取已经同步到本机的消息。\n关闭程序、电脑休眠或微信退出期间停止同步；重启后点击开始可补采仍在本地的消息。\n微信升级可能需要适配。", "使用说明")));
         toolbar.Controls.Add(Button("关于", (_, _) => MessageBox.Show(this,
             $"Ripper\n\nFree your conversations. Own your records.\n\n版本：v{Application.ProductVersion}\n\n记录选定群或联系人的本地微信消息，支持聊天记录、附件和语音导出。\n\n数据保存在本机，不上传聊天内容。\n本项目与微信官方无隶属关系。\n\n本机数据目录：\n{store.Root}",
             "关于 Ripper", MessageBoxButtons.OK, MessageBoxIcon.Information)));
@@ -78,6 +79,8 @@ public sealed class MainForm : Form
         var recordsToolbar = new FlowLayoutPanel { Dock = DockStyle.Fill, WrapContents = false, Padding = new Padding(0, 3, 0, 0) };
         exportCurrent = Button("导出当前聊天记录", Export); exportCurrent.Enabled = false;
         recordsToolbar.Controls.Add(exportCurrent); recordsLayout.Controls.Add(recordsToolbar, 0, 0);
+        recordsToolbar.Controls.Add(transcribeVoices);
+        recordsToolbar.Controls.Add(Button("语音模型设置", (_, _) => { using var model = new SpeechModelDialog(store.Root); model.ShowDialog(this); }));
         recordsTab.Controls.Add(recordsLayout);
         var split = new SplitContainer { Dock = DockStyle.Fill, Size = new(1200, 500), SplitterDistance = 700, Panel1MinSize = 350, Panel2MinSize = 300 };
         split.Panel1.Controls.Add(captures);
@@ -303,6 +306,15 @@ public sealed class MainForm : Form
         string? targetId = captures.SelectedConversationId;
         if (targetId == null) { MessageBox.Show(this, "请先切换到需要导出的群或联系人标签。", "选择当前会话"); return; }
         await PauseAndDrain();
+        if (transcribeVoices.Checked && store.Captures(targetId: targetId).Any(c => c.Message != null && (c.Message.RawType & 0xffffffff) == 34))
+        {
+            if (!SpeechModel.Supported || !SpeechModel.Exists(store.Root))
+            {
+                using var model = new SpeechModelDialog(store.Root);
+                if (model.ShowDialog(this) != DialogResult.OK) return;
+            }
+        }
+        var transcription = transcribeVoices.Checked ? new VoiceTranscriptionOptions(SpeechModel.PathFor(store.Root)) : null;
         using var dialog = new FolderBrowserDialog { Description = "选择导出位置，将在其中新建带时间的导出文件夹", UseDescriptionForTitle = true };
         if (dialog.ShowDialog(this) != DialogResult.OK) return;
         string folder = Path.Combine(dialog.SelectedPath, "Ripper_导出_" + DateTimeOffset.UtcNow.ToOffset(TimeSpan.FromHours(8)).ToString("yyyyMMdd_HHmmss") + "_" + Guid.NewGuid().ToString("N")[..6]);
@@ -310,7 +322,7 @@ public sealed class MainForm : Form
         badge.Text = "正在导出当前会话、文件附件及语音…";
         try
         {
-            using var progress = new ExportProgressDialog(updates => Exporter.Export(store, folder, targetId, updates));
+            using var progress = new ExportProgressDialog(updates => Exporter.Export(store, folder, targetId, updates, transcription));
             if (progress.ShowDialog(this) != DialogResult.OK) throw progress.Failure ?? new IOException("导出未完成。");
             badge.Text = "当前会话导出完成 · 采集已暂停"; OpenFolder(folder);
         }

@@ -19,8 +19,20 @@
     <EmbeddedResource Include="$(MSBuildProjectDirectory)\obj\native\WeChatNotesSilk.dll" LogicalName="WeChatNotes.Native.Silk.dll" />
     <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.11" />
     <PackageReference Include="ZstdSharp.Port" Version="0.8.8" />
+    <PackageReference Include="Whisper.net" Version="1.9.1" />
+    <PackageReference Include="Whisper.net.Runtime" Version="1.9.1" />
+    <PackageReference Include="Whisper.net.Runtime.NoAvx" Version="1.9.1" />
   </ItemGroup>
   <Target Name="BuildSilkDecoder" BeforeTargets="PrepareForBuild" Condition="'$(DesignTimeBuild)' != 'true'">
     <Exec Command="pwsh -NoLogo -NoProfile -NonInteractive -File &quot;$(MSBuildProjectDirectory)\..\..\native\build.ps1&quot; -OutputDirectory &quot;$(MSBuildProjectDirectory)\obj\native&quot;" />
+  </Target>
+  <Target Name="ConfigureSpeechRuntimes" BeforeTargets="AssignTargetPaths">
+    <ItemGroup>
+      <!-- Whisper locates these libraries relative to the application directory. -->
+      <None Update="@(None)" Condition="$([System.String]::Copy('%(None.Identity)').Contains('whisper.net.runtime'))">
+        <ExcludeFromSingleFile>true</ExcludeFromSingleFile>
+      </None>
+      <None Remove="@(None)" Condition="$([System.String]::Copy('%(None.Identity)').Contains('whisper.net.runtime')) And !$([System.String]::Copy('%(None.TargetPath)').Contains('win-x64'))" />
+    </ItemGroup>
   </Target>
 </Project>
