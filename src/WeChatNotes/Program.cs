@@ -6,6 +6,7 @@ internal static class Program
     static void Main(string[] args)
     {
         ApplicationConfiguration.Initialize();
+        if (args.Length == 1 && args[0] == "--speech-worker") { GpuSpeechWorker.Run(); return; }
         // Handle browser activation before the recorder mutex, including while the main window is running.
         if (args.Length > 0 && args[0] == "--locate-export")
         {

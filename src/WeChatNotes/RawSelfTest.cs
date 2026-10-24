@@ -171,9 +171,14 @@ internal static class RawSelfTest
             ExportFileLocatorSelfTest.Run(root, Check);
             VoiceSelfTest.Run(root, Check);
             TranscriptionSelfTest.Run(root, Check);
+            SpeechBackendSelfTest.Run(root, Check);
             if (Environment.GetEnvironmentVariable("RIPPER_TEST_SPEECH_MODEL") is { Length: > 0 } speechModel &&
                 Environment.GetEnvironmentVariable("RIPPER_TEST_SPEECH_WAV") is { Length: > 0 } speechWave)
+            {
                 TranscriptionSelfTest.RunModel(root, speechModel, speechWave, report, Check);
+                if (Environment.GetEnvironmentVariable("RIPPER_TEST_GPU") == "1")
+                    SpeechBackendSelfTest.RunModel(root, speechModel, speechWave, report, Check);
+            }
             SilkSelfTest.Run(root, Check);
         }
         catch (Exception ex) { results.Add(new { name = "异常", passed = false, detail = ex.ToString() }); Environment.ExitCode = 1; }

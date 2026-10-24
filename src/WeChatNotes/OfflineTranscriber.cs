@@ -4,31 +4,37 @@ using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
 using Whisper.net;
+using Whisper.net.LibraryLoader;
 
 namespace WeChatNotes;
 
-public sealed record VoiceTranscriptionOptions(string ModelPath, int MaxParallelism = 4)
+public enum SpeechDevice { Auto, Cpu, Gpu }
+public sealed record VoiceTranscriptionOptions(string ModelPath, int MaxParallelism = 4, SpeechDevice Device = SpeechDevice.Auto)
 {
     internal int Parallelism => Math.Clamp(MaxParallelism, 1, 8);
 }
 public sealed record VoiceTranscript(string? Text, string Status, string Model = "Whisper Small (offline)");
 
-internal sealed class OfflineTranscriber(string modelPath, int parallelism = 4) : IDisposable
+internal sealed class OfflineTranscriber(string modelPath, int parallelism = 4, bool useGpu = false) : IDisposable
 {
-    private readonly Lazy<WhisperFactory> factory = new(() => LoadFactory(modelPath));
+    private readonly Lazy<WhisperFactory> factory = new(() => LoadFactory(modelPath, useGpu));
     private readonly ConcurrentBag<WhisperProcessor> processors = new();
     private readonly object builderLock = new();
     private readonly SemaphoreSlim slots = new(Math.Clamp(parallelism, 1, 8));
     private int createdProcessors;
     internal int CreatedProcessors => createdProcessors;
 
-    private static WhisperFactory LoadFactory(string path)
+    internal void WarmUp() => _ = factory.Value;
+
+    private static WhisperFactory LoadFactory(string path, bool gpu)
     {
         if (!SpeechModel.Supported) throw new PlatformNotSupportedException();
         using (var file = File.OpenRead(path))
             if (file.Length != SpeechModel.Length || !Convert.ToHexString(SHA256.HashData(file)).Equals(SpeechModel.Hash, StringComparison.OrdinalIgnoreCase))
                 throw new InvalidDataException("模型校验失败");
-        return WhisperFactory.FromPath(path);
+        // GPU runtimes live in a separate worker; the main process always loads CPU libraries.
+        RuntimeOptions.RuntimeLibraryOrder = gpu ? [RuntimeLibrary.Vulkan] : [RuntimeLibrary.Cpu, RuntimeLibrary.CpuNoAvx];
+        return WhisperFactory.FromPath(path, new WhisperFactoryOptions { UseGpu = gpu });
     }
 
     internal VoiceTranscript Transcribe(string path)

@@ -27,6 +27,7 @@ public sealed class MainForm : Form
     private readonly RowStyle exportProgressRow = new(SizeType.Absolute, 0);
     private readonly CheckBox transcribeVoices = new() { Text = "语音转文字（离线）", AutoSize = true, Checked = SpeechModel.Supported, Enabled = SpeechModel.Supported, Padding = new(8, 6, 0, 0) };
     private readonly NumericUpDown voiceParallelism = new() { Minimum = 1, Maximum = 8, Value = 4, Width = 50, AccessibleName = "语音转写并发数", Enabled = SpeechModel.Supported };
+    private readonly ComboBox speechDevice = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 80, AccessibleName = "语音识别设备", Enabled = SpeechModel.Supported };
     private bool exporting;
     private bool preparingExport;
     private Task? activeExport;
@@ -87,9 +88,18 @@ public sealed class MainForm : Form
         exportCurrent = Button("导出当前聊天记录", Export); exportCurrent.Enabled = false;
         recordsToolbar.Controls.Add(exportCurrent); recordsLayout.Controls.Add(recordsToolbar, 0, 0);
         recordsToolbar.Controls.Add(transcribeVoices);
-        recordsToolbar.Controls.Add(new Label { Text = "并发数", AutoSize = true, Padding = new(4, 6, 0, 0) });
+        speechDevice.Items.AddRange(["自动", "CPU", "GPU"]); speechDevice.SelectedIndex = 0;
+        recordsToolbar.Controls.Add(new Label { Text = "识别设备", AutoSize = true, Padding = new(4, 6, 0, 0) });
+        recordsToolbar.Controls.Add(speechDevice);
+        recordsToolbar.Controls.Add(new Label { Text = "CPU并发", AutoSize = true, Padding = new(4, 6, 0, 0) });
         recordsToolbar.Controls.Add(voiceParallelism);
-        transcribeVoices.CheckedChanged += (_, _) => voiceParallelism.Enabled = transcribeVoices.Checked && SpeechModel.Supported;
+        void UpdateSpeechControls()
+        {
+            speechDevice.Enabled = transcribeVoices.Checked && SpeechModel.Supported;
+            voiceParallelism.Enabled = speechDevice.Enabled && speechDevice.SelectedIndex != (int)SpeechDevice.Gpu;
+        }
+        transcribeVoices.CheckedChanged += (_, _) => UpdateSpeechControls();
+        speechDevice.SelectedIndexChanged += (_, _) => UpdateSpeechControls();
         recordsToolbar.Controls.Add(Button("语音模型设置", (_, _) => { using var model = new SpeechModelDialog(store.Root); model.ShowDialog(this); }));
         recordsTab.Controls.Add(recordsLayout);
         var split = new SplitContainer { Dock = DockStyle.Fill, Size = new(1200, 500), SplitterDistance = 700, Panel1MinSize = 350, Panel2MinSize = 300 };
@@ -332,7 +342,7 @@ public sealed class MainForm : Form
                     if (model.ShowDialog(this) != DialogResult.OK) return;
                 }
             }
-            var transcription = transcribe ? new VoiceTranscriptionOptions(SpeechModel.PathFor(root), (int)voiceParallelism.Value) : null;
+            var transcription = transcribe ? new VoiceTranscriptionOptions(SpeechModel.PathFor(root), (int)voiceParallelism.Value, (SpeechDevice)speechDevice.SelectedIndex) : null;
             using var dialog = new FolderBrowserDialog { Description = "选择导出位置，将在其中新建以聊天窗口名称命名的文件夹；同名时自动编号", UseDescriptionForTitle = true };
             if (dialog.ShowDialog(this) != DialogResult.OK) return;
             string folder = ExportDirectory.Create(dialog.SelectedPath, conversationName);

@@ -91,13 +91,13 @@ internal static class BackgroundExportSelfTest
                 var counts = controls.OfType<Label>().Single(c => c.AccessibleName == "导出完成条数");
                 view.SetProgress(new("离线语音转文字", 0, 3));
                 bool waiting = bar.Style == ProgressBarStyle.Marquee && bar.MarqueeAnimationSpeed > 0 && counts.Text.Contains("0 / 3") && counts.Text.Contains("识别中");
-                view.SetProgress(new("离线语音转文字", 1, 3));
-                check("语音转写等待首条和后续结果时持续动画且保留真实条数", waiting && bar.Style == ProgressBarStyle.Marquee && counts.Text.Contains("1 / 3"));
+                view.SetProgress(new("离线语音转文字", 1, 3, "GPU（Vulkan）· 单路"));
+                check("语音转写等待首条和后续结果时持续动画且保留真实条数", waiting && bar.Style == ProgressBarStyle.Marquee && counts.Text.Contains("1 / 3") && stage.Text.Contains("GPU（Vulkan）"));
                 view.SetProgress(new("离线语音转文字", 3, 3));
                 bool recognized = bar.Style == ProgressBarStyle.Continuous && bar.Value == 100 && counts.Text.Contains("3 / 3");
                 view.SetProgress(new("写入聊天记录", 25, 100));
                 check("语音转写结束及进入文档阶段恢复真实百分比", recognized && bar.Style == ProgressBarStyle.Continuous && bar.Value == 25);
-                view.SetProgress(new("离线语音转文字", 1, 3));
+                view.SetProgress(new("离线语音转文字", 1, 3, "GPU（Vulkan）· 单路"));
                 form.PerformLayout();
                 using (var preview = new Bitmap(form.Width, form.Height))
                 {

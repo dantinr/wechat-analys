@@ -8,13 +8,13 @@ public static class Exporter
 {
     public static void Export(Store store, string folder, string? targetId = null, IProgress<ExportProgress>? progress = null, VoiceTranscriptionOptions? transcription = null)
     {
-        using var engine = transcription == null ? null : new OfflineTranscriber(transcription.ModelPath, transcription.Parallelism);
-        Export(store, folder, targetId, null, progress, engine == null ? null : engine.Transcribe, transcription?.Parallelism ?? 4);
+        using var engine = transcription == null ? null : new SpeechTranscriber(transcription);
+        Export(store, folder, targetId, null, progress, engine == null ? null : engine.Transcribe, transcription?.Parallelism ?? 4, engine);
     }
 
     internal static void Export(Store store, string folder, string? targetId,
         Func<string, IReadOnlyList<CaptureRecord>, Dictionary<string, VoicePayload>>? readVoices, IProgress<ExportProgress>? progress = null,
-        Func<string, VoiceTranscript>? transcribe = null, int transcriptionParallelism = 4)
+        Func<string, VoiceTranscript>? transcribe = null, int transcriptionParallelism = 4, SpeechTranscriber? transcriptionEngine = null)
     {
         var updates = new ExportProgressReporter(progress);
         updates.Report(new("准备导出记录"));
@@ -42,22 +42,31 @@ public static class Exporter
         var transcripts = new Dictionary<string, VoiceTranscript>(StringComparer.Ordinal);
         if (transcribe != null)
         {
-            completed = 0; updates.Report(new("离线语音转文字", 0, voices.Count));
+            completed = 0; updates.Report(new("离线语音转文字", 0, voices.Count, transcriptionEngine?.Description));
             var entries = voices.ToArray();
             var results = new VoiceTranscript[entries.Length];
             var progressLock = new object();
-            Parallel.For(0, entries.Length, new ParallelOptions { MaxDegreeOfParallelism = Math.Clamp(transcriptionParallelism, 1, 8) }, i =>
+            void BackendChanged(string description)
             {
-                var voice = entries[i].Value;
-                if (voice.RelativePath is not { } path) results[i] = new(null, "本地音频未导出，无法转写");
-                else if (!Path.GetExtension(path).Equals(".wav", StringComparison.OrdinalIgnoreCase)) results[i] = new(null, "当前音频未转换为 WAV，请收听原音");
-                else
+                lock (progressLock) updates.Report(new("离线语音转文字", completed, voices.Count, description));
+            }
+            if (transcriptionEngine != null) transcriptionEngine.StatusChanged += BackendChanged;
+            try
+            {
+                Parallel.For(0, entries.Length, new ParallelOptions { MaxDegreeOfParallelism = Math.Clamp(transcriptionParallelism, 1, 8) }, i =>
                 {
-                    try { results[i] = transcribe(Path.Combine(folder, path)); }
-                    catch (Exception) { results[i] = new(null, "语音识别失败，请收听原音后重试"); }
-                }
-                lock (progressLock) updates.Report(new("离线语音转文字", ++completed, voices.Count));
-            });
+                    var voice = entries[i].Value;
+                    if (voice.RelativePath is not { } path) results[i] = new(null, "本地音频未导出，无法转写");
+                    else if (!Path.GetExtension(path).Equals(".wav", StringComparison.OrdinalIgnoreCase)) results[i] = new(null, "当前音频未转换为 WAV，请收听原音");
+                    else
+                    {
+                        try { results[i] = transcribe(Path.Combine(folder, path)); }
+                        catch (Exception) { results[i] = new(null, "语音识别失败，请收听原音后重试"); }
+                    }
+                    lock (progressLock) updates.Report(new("离线语音转文字", ++completed, voices.Count, transcriptionEngine?.Description));
+                });
+            }
+            finally { if (transcriptionEngine != null) transcriptionEngine.StatusChanged -= BackendChanged; }
             for (int i = 0; i < entries.Length; i++) transcripts[entries[i].Key] = results[i];
         }
         var utf8 = new UTF8Encoding(true);

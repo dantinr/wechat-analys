@@ -42,7 +42,7 @@ internal sealed class ExportProgressView : UserControl
     internal void SetProgress(ExportProgress progress)
     {
         if (!active || IsDisposed) return;
-        stage.Text = $"正在导出「{conversation}」· {progress.Stage}";
+        stage.Text = $"正在导出「{conversation}」· {progress.Stage}" + (string.IsNullOrEmpty(progress.Detail) ? "" : " · " + progress.Detail);
         if (progress.Percent is int percent)
         {
             // Recognition may take minutes before any recording finishes; keep activity visible
