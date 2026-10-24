@@ -5,9 +5,9 @@ namespace WeChatNotes;
 internal sealed class ExportProgressView : UserControl
 {
     private readonly Label stage = new() { Dock = DockStyle.Fill, AutoEllipsis = true, TextAlign = ContentAlignment.MiddleLeft, AccessibleName = "导出状态" };
-    private readonly Label counts = new() { Dock = DockStyle.Fill, AutoEllipsis = true, TextAlign = ContentAlignment.MiddleLeft };
+    private readonly Label counts = new() { Dock = DockStyle.Fill, AutoEllipsis = true, TextAlign = ContentAlignment.MiddleLeft, AccessibleName = "导出完成条数" };
     private readonly Label elapsed = new() { Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleRight, ForeColor = Color.DimGray };
-    private readonly ProgressBar bar = new() { Dock = DockStyle.Fill, Margin = new(0, 5, 12, 5), AccessibleName = "导出进度" };
+    private readonly ProgressBar bar = new() { Dock = DockStyle.Fill, Margin = new(0, 5, 12, 5), MarqueeAnimationSpeed = 30, AccessibleName = "导出进度" };
     private readonly Button open = new() { Text = "打开目录", AutoSize = true, Dock = DockStyle.Fill, Enabled = false };
     private readonly System.Windows.Forms.Timer timer = new() { Interval = 1000 };
     private readonly Stopwatch watch = new();
@@ -45,8 +45,13 @@ internal sealed class ExportProgressView : UserControl
         stage.Text = $"正在导出「{conversation}」· {progress.Stage}";
         if (progress.Percent is int percent)
         {
-            bar.Style = ProgressBarStyle.Continuous; bar.Value = percent;
-            counts.Text = $"本步骤 {progress.Completed:N0} / {progress.Total:N0}（{percent}%）";
+            // Recognition may take minutes before any recording finishes; keep activity visible
+            // without turning elapsed time into an invented completion percentage.
+            bool recognizing = progress.Stage == "离线语音转文字" && progress.Completed < progress.Total;
+            bar.Style = recognizing ? ProgressBarStyle.Marquee : ProgressBarStyle.Continuous;
+            bar.Value = percent;
+            counts.Text = recognizing ? $"已完成 {progress.Completed:N0} / {progress.Total:N0} · 识别中…"
+                : $"本步骤 {progress.Completed:N0} / {progress.Total:N0}（{percent}%）";
         }
         else
         {

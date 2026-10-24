@@ -88,6 +88,16 @@ internal static class BackgroundExportSelfTest
                 bool exact = bar.Style == ProgressBarStyle.Continuous && bar.Value == 25;
                 view.SetProgress(new("读取本地语音库"));
                 check("嵌入式进度显示真实百分比并支持未知数量步骤", exact && bar.Style == ProgressBarStyle.Marquee && stage.Text.Contains("合成会话 a"));
+                var counts = controls.OfType<Label>().Single(c => c.AccessibleName == "导出完成条数");
+                view.SetProgress(new("离线语音转文字", 0, 3));
+                bool waiting = bar.Style == ProgressBarStyle.Marquee && bar.MarqueeAnimationSpeed > 0 && counts.Text.Contains("0 / 3") && counts.Text.Contains("识别中");
+                view.SetProgress(new("离线语音转文字", 1, 3));
+                check("语音转写等待首条和后续结果时持续动画且保留真实条数", waiting && bar.Style == ProgressBarStyle.Marquee && counts.Text.Contains("1 / 3"));
+                view.SetProgress(new("离线语音转文字", 3, 3));
+                bool recognized = bar.Style == ProgressBarStyle.Continuous && bar.Value == 100 && counts.Text.Contains("3 / 3");
+                view.SetProgress(new("写入聊天记录", 25, 100));
+                check("语音转写结束及进入文档阶段恢复真实百分比", recognized && bar.Style == ProgressBarStyle.Continuous && bar.Value == 25);
+                view.SetProgress(new("离线语音转文字", 1, 3));
                 form.PerformLayout();
                 using (var preview = new Bitmap(form.Width, form.Height))
                 {
